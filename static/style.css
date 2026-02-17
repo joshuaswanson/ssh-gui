@@ -6,7 +6,8 @@
   box-sizing: border-box;
 }
 
-:root {
+:root,
+[data-theme="dark"] {
   --bg-primary: #0d1117;
   --bg-secondary: #161b22;
   --bg-tertiary: #21262d;
@@ -21,12 +22,31 @@
   --accent-bg: rgba(56, 139, 253, 0.15);
   --green: #3fb950;
   --red: #f85149;
+  --terminal-bg: #0d1117;
   --font-mono: "SF Mono", "Cascadia Code", "Fira Code", Menlo, monospace;
   --font-sans:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   --column-width: 240px;
   --toolbar-height: 44px;
   --resize-handle-height: 4px;
+}
+
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f6f8fa;
+  --bg-tertiary: #eaeef2;
+  --bg-hover: #dfe3e8;
+  --border: #d0d7de;
+  --border-light: #bbc0c5;
+  --text-primary: #1f2328;
+  --text-secondary: #656d76;
+  --text-muted: #8b949e;
+  --accent: #0969da;
+  --accent-hover: #0550ae;
+  --accent-bg: rgba(9, 105, 218, 0.1);
+  --green: #1a7f37;
+  --red: #cf222e;
+  --terminal-bg: #f6f8fa;
 }
 
 html,
@@ -36,6 +56,13 @@ body {
   background: var(--bg-primary);
   color: var(--text-primary);
   overflow: hidden;
+  transition:
+    background 0.3s ease,
+    color 0.3s ease;
+}
+
+.theme-toggle-connect {
+  margin-top: 12px;
 }
 
 ::-webkit-scrollbar {
@@ -1007,7 +1034,7 @@ body {
 #terminal-container {
   flex: 0 0 calc(45% - var(--toolbar-height) - var(--resize-handle-height));
   overflow: hidden;
-  background: #0d1117;
+  background: var(--terminal-bg);
   padding: 10px 12px;
 }
 
