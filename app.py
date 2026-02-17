@@ -510,7 +510,7 @@ def git_info():
     if not path:
         return jsonify({"error": "path is required"}), 400
 
-    quoted = shlex.quote(path)
+    basename = shlex.quote(posixpath.basename(path))
     dir_part = shlex.quote(posixpath.dirname(path))
 
     result = {}
@@ -518,7 +518,7 @@ def git_info():
     # Get the author of the commit that first added this file
     cmd = (
         f"cd {dir_part} && "
-        f"git log --diff-filter=A --follow --format='%an' -- {quoted} 2>/dev/null | tail -1"
+        f"git log --diff-filter=A --follow --format='%an' -- {basename} 2>/dev/null | tail -1"
     )
     _, stdout, _ = ssh_state["client"].exec_command(cmd)
     author = stdout.read().decode().strip()
