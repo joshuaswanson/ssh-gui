@@ -112,11 +112,22 @@ body {
 
 /* Saved hosts */
 
+.starred-hosts {
+  flex-shrink: 0;
+}
+
+.starred-hosts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
 .saved-hosts {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 340px;
+  max-height: 280px;
   overflow-y: auto;
   padding-right: 4px;
 }
