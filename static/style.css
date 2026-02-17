@@ -154,6 +154,7 @@ body {
 
 .starred-hosts {
   flex-shrink: 0;
+  margin-bottom: 32px;
 }
 
 .starred-hosts-list {
@@ -173,12 +174,6 @@ body {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-primary);
-  mask-image: linear-gradient(to bottom, black calc(100% - 24px), transparent);
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    black calc(100% - 24px),
-    transparent
-  );
 }
 
 .saved-hosts::-webkit-scrollbar {
@@ -935,6 +930,9 @@ body {
   flex-shrink: 0;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border);
+  position: sticky;
+  left: 0;
+  z-index: 1;
 }
 
 .file-preview-lines span {
@@ -956,13 +954,12 @@ body {
   flex: 1;
   min-width: 0;
   white-space: pre;
-  overflow-x: auto;
+  overflow: visible;
 }
 
 .file-preview-content.wrapped {
   white-space: pre-wrap;
   word-wrap: break-word;
-  overflow-x: hidden;
 }
 
 .file-preview-actions {
@@ -975,6 +972,11 @@ body {
 .preview-wrap-btn.active {
   color: var(--accent);
   background: var(--accent-bg);
+}
+
+.file-preview-pdf {
+  flex: 1;
+  display: flex;
 }
 
 .file-preview-image {
@@ -1134,6 +1136,67 @@ body {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ── Path Bar ─────────────────────────────────────────────────────── */
+
+.path-bar {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.path-bar-text {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+  direction: rtl;
+  text-align: left;
+}
+
+.path-bar-text bdi {
+  direction: ltr;
+  unicode-bidi: embed;
+}
+
+.path-bar-copy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.path-bar-copy:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.path-bar-branch {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  background: var(--accent-bg);
+  padding: 2px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* ── Sidebar ──────────────────────────────────────────────────────── */
@@ -1434,11 +1497,15 @@ body {
   color: var(--text-primary);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 6px 10px;
+  height: 38px;
+  padding: 0 14px;
   font-size: 12px;
   font-family: var(--font-mono);
   outline: none;
   cursor: pointer;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
 }
 
 .venv-selector:focus {
@@ -1488,7 +1555,7 @@ body {
   padding: 6px 16px;
   font-size: 13px;
   gap: 8px;
-  transition: background 0.1s ease;
+  position: relative;
 }
 
 .package-row:hover {
@@ -1512,15 +1579,16 @@ body {
 }
 
 .package-uninstall {
-  display: none;
-  background: transparent;
+  position: absolute;
+  right: 12px;
+  background: var(--bg-secondary);
   border: none;
   color: var(--red);
   cursor: pointer;
   font-size: 11px;
   padding: 2px 6px;
   border-radius: 4px;
-  flex-shrink: 0;
+  display: none;
 }
 
 .package-row:hover .package-uninstall {

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>shh!</title>
+    <title>SSH GUI</title>
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css"
@@ -18,8 +18,10 @@
     <div id="connect-screen">
       <div class="connect-container">
         <div class="connect-header">
-          <h1>shh!</h1>
-          <p class="subtitle">Joshua's quiet way into remote servers</p>
+          <h1>SSH GUI</h1>
+          <p class="subtitle">
+            Joshua's GUI for servers because he can't remember CLI commands
+          </p>
           <button
             class="btn btn-icon theme-toggle-connect"
             onclick="toggleTheme()"
@@ -204,6 +206,7 @@
         <div id="sidebar" class="sidebar"></div>
         <div id="columns"></div>
       </div>
+      <div id="path-bar" class="path-bar"></div>
       <div id="resize-handle"></div>
       <div id="tmux-bar" class="tmux-bar hidden"></div>
       <div id="terminal-container">
