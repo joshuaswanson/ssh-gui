@@ -17,6 +17,20 @@ const state = {
   dragSources: [],
   renaming: null, // { colIndex, name } when inline rename is active
   previewWrap: false,
+  tmux: {
+    active: false,
+    session: null,
+    windows: [],
+    pollInterval: null,
+  },
+  packagePanel: {
+    open: false,
+    packages: [],
+    filter: "",
+    venvPath: null,
+    detectInfo: null,
+    loading: false,
+  },
 };
 
 let selectGeneration = 0;
@@ -417,8 +431,10 @@ function onConnected(data) {
     `${data.username}@${data.host}`;
 
   showScreen("main");
+  renderSidebar();
   navigateTo(data.home_dir);
   initTerminal();
+  startTmuxPolling();
 }
 
 async function handleDisconnect() {
@@ -442,6 +458,9 @@ async function handleDisconnect() {
     state.terminal = null;
     state.fitAddon = null;
   }
+
+  stopTmuxPolling();
+  closePackageManager();
 
   showScreen("connect");
 }
@@ -1465,6 +1484,7 @@ function initTerminal() {
       fontSize: 13,
       lineHeight: 1.2,
       fontFamily: "'SF Mono', 'Cascadia Code', 'Fira Code', Menlo, monospace",
+      allowProposedApi: true,
       theme:
         getCurrentTheme() === "light"
           ? LIGHT_TERMINAL_THEME
@@ -1477,6 +1497,9 @@ function initTerminal() {
     }
 
     state.terminal.open(terminalEl);
+
+    // Click-to-move-cursor: query cursor position via DSR, then send arrow keys
+    setupTerminalClickHandler(state.terminal);
 
     setTimeout(() => {
       if (state.fitAddon) state.fitAddon.fit();
@@ -1547,6 +1570,78 @@ function cdToBrowserPath() {
     });
     state.terminal.focus();
   }
+}
+
+// ── Terminal Click-to-Move ────────────────────────────────────────────
+
+function setupTerminalClickHandler(term) {
+  // When user clicks in the terminal, query cursor position via DSR,
+  // then send arrow keys to move the cursor to the clicked column.
+  term.element.addEventListener("click", (e) => {
+    if (!state.socket) return;
+    // Don't interfere if text is selected
+    const selection = term.getSelection();
+    if (selection && selection.length > 0) return;
+
+    // Calculate clicked column from terminal geometry
+    const termEl = term.element.querySelector(".xterm-screen");
+    if (!termEl) return;
+    const termRect = termEl.getBoundingClientRect();
+    const cellWidth = termRect.width / term.cols;
+    const clickCol = Math.floor((e.clientX - termRect.left) / cellWidth);
+
+    // Query current cursor position via DSR (Device Status Report)
+    // Response format: ESC [ row ; col R
+    requestCursorPosition(term, (cursorRow, cursorCol) => {
+      const clickedRow = term.buffer.active.cursorY;
+
+      // Only move on the same row as cursor (command line editing)
+      if (clickedRow !== cursorRow) return;
+
+      const diff = clickCol - cursorCol;
+      if (diff === 0) return;
+
+      // Send arrow keys
+      const arrow = diff > 0 ? "\x1b[C" : "\x1b[D";
+      const count = Math.abs(diff);
+      const keys = arrow.repeat(count);
+      state.socket.emit("terminal_input", { data: keys });
+    });
+  });
+}
+
+function requestCursorPosition(term, callback) {
+  // Send DSR (ESC[6n) and parse response (ESC[row;colR)
+  let responseData = "";
+  let listening = true;
+
+  const dispose = term.onData((data) => {
+    if (!listening) return;
+
+    // Check if this data contains a DSR response
+    responseData += data;
+    const match = responseData.match(/\x1b\[(\d+);(\d+)R/);
+    if (match) {
+      listening = false;
+      dispose.dispose();
+      const row = parseInt(match[1]) - 1; // 0-indexed
+      const col = parseInt(match[2]) - 1; // 0-indexed
+      callback(row, col);
+    }
+  });
+
+  // Send DSR query
+  if (state.socket) {
+    state.socket.emit("terminal_input", { data: "\x1b[6n" });
+  }
+
+  // Timeout: clean up after 500ms if no response
+  setTimeout(() => {
+    if (listening) {
+      listening = false;
+      dispose.dispose();
+    }
+  }, 500);
 }
 
 // ── Directory Sizes ─────────────────────────────────────────────────
@@ -1992,4 +2087,576 @@ function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
   return div.innerHTML;
+}
+
+// ── Sidebar Shortcuts ────────────────────────────────────────────────
+
+function getSidebarShortcuts(host) {
+  try {
+    return JSON.parse(localStorage.getItem("shortcuts:" + host) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveSidebarShortcuts(host, shortcuts) {
+  localStorage.setItem("shortcuts:" + host, JSON.stringify(shortcuts));
+}
+
+function renderSidebar() {
+  const sidebar = document.getElementById("sidebar");
+  if (!sidebar || !state.connected) return;
+
+  sidebar.innerHTML = "";
+
+  // Home link
+  const section = document.createElement("div");
+  section.className = "sidebar-section";
+
+  const homeItem = document.createElement("div");
+  homeItem.className = "sidebar-item";
+  homeItem.innerHTML = `<span class="sidebar-icon">${FOLDER_ICON}</span><span class="sidebar-name">Home</span>`;
+  homeItem.addEventListener("click", () => navigateTo(state.homeDir));
+  section.appendChild(homeItem);
+
+  const sep = document.createElement("div");
+  sep.className = "sidebar-separator";
+  section.appendChild(sep);
+
+  const label = document.createElement("div");
+  label.className = "sidebar-label";
+  label.textContent = "Favorites";
+  section.appendChild(label);
+
+  // User shortcuts
+  const shortcuts = getSidebarShortcuts(state.host);
+  shortcuts.forEach((shortcut, idx) => {
+    const item = document.createElement("div");
+    item.className = "sidebar-item";
+    const name = shortcut.name || shortcut.path.split("/").pop() || "/";
+    item.innerHTML = `<span class="sidebar-icon">${FOLDER_ICON}</span><span class="sidebar-name">${escapeHtml(name)}</span>`;
+    item.title = shortcut.path;
+    item.addEventListener("click", () => navigateTo(shortcut.path));
+    item.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showSidebarContextMenu(e.clientX, e.clientY, idx);
+    });
+    section.appendChild(item);
+  });
+
+  sidebar.appendChild(section);
+
+  // Drag-and-drop onto sidebar
+  sidebar.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "link";
+    sidebar.classList.add("drag-over");
+  });
+
+  sidebar.addEventListener("dragleave", (e) => {
+    if (!sidebar.contains(e.relatedTarget)) {
+      sidebar.classList.remove("drag-over");
+    }
+  });
+
+  sidebar.addEventListener("drop", (e) => {
+    e.preventDefault();
+    sidebar.classList.remove("drag-over");
+
+    let paths;
+    try {
+      paths = JSON.parse(e.dataTransfer.getData("text/plain"));
+    } catch {
+      return;
+    }
+    if (!Array.isArray(paths)) return;
+
+    const shortcuts = getSidebarShortcuts(state.host);
+    let added = 0;
+    for (const p of paths) {
+      // Only add directories (check if path is in a directory column)
+      const isDir = state.columns.some(
+        (col) =>
+          col.path &&
+          col.entries &&
+          col.entries.some(
+            (ent) =>
+              ent.is_dir &&
+              (col.path === "/"
+                ? "/" + ent.name
+                : col.path + "/" + ent.name) === p,
+          ),
+      );
+      if (isDir && !shortcuts.some((s) => s.path === p)) {
+        shortcuts.push({ path: p, name: p.split("/").pop() || "/" });
+        added++;
+      }
+    }
+    if (added > 0) {
+      saveSidebarShortcuts(state.host, shortcuts);
+      renderSidebar();
+      showNotification(`Added ${added} shortcut(s)`, "success");
+    }
+  });
+}
+
+function showSidebarContextMenu(x, y, shortcutIndex) {
+  hideContextMenu();
+
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.id = "context-menu";
+
+  const removeItem = document.createElement("div");
+  removeItem.className = "context-menu-item danger";
+  removeItem.textContent = "Remove";
+  removeItem.addEventListener("click", () => {
+    hideContextMenu();
+    const shortcuts = getSidebarShortcuts(state.host);
+    shortcuts.splice(shortcutIndex, 1);
+    saveSidebarShortcuts(state.host, shortcuts);
+    renderSidebar();
+  });
+  menu.appendChild(removeItem);
+
+  document.body.appendChild(menu);
+
+  const rect = menu.getBoundingClientRect();
+  if (x + rect.width > window.innerWidth)
+    x = window.innerWidth - rect.width - 8;
+  if (y + rect.height > window.innerHeight)
+    y = window.innerHeight - rect.height - 8;
+  menu.style.left = x + "px";
+  menu.style.top = y + "px";
+
+  setTimeout(() => {
+    document.addEventListener("click", hideContextMenu, { once: true });
+    document.addEventListener("contextmenu", hideContextMenu, { once: true });
+  }, 0);
+  document.addEventListener("keydown", handleContextMenuKey);
+}
+
+// ── Tmux GUI ─────────────────────────────────────────────────────────
+
+function startTmuxPolling() {
+  if (state.tmux.pollInterval) return;
+  refreshTmuxState();
+  state.tmux.pollInterval = setInterval(refreshTmuxState, 2000);
+}
+
+function stopTmuxPolling() {
+  if (state.tmux.pollInterval) {
+    clearInterval(state.tmux.pollInterval);
+    state.tmux.pollInterval = null;
+  }
+  state.tmux.active = false;
+  state.tmux.windows = [];
+  const bar = document.getElementById("tmux-bar");
+  if (bar) bar.classList.add("hidden");
+}
+
+async function refreshTmuxState() {
+  try {
+    const statusResp = await fetch("/api/tmux/status");
+    const status = await statusResp.json();
+
+    state.tmux.active = status.active;
+    state.tmux.session = status.session;
+
+    if (!status.active) {
+      state.tmux.windows = [];
+      const bar = document.getElementById("tmux-bar");
+      if (bar) bar.classList.add("hidden");
+      return;
+    }
+
+    const windowsResp = await fetch("/api/tmux/windows");
+    const windowsData = await windowsResp.json();
+    state.tmux.windows = windowsData.windows || [];
+
+    renderTmuxBar();
+  } catch {
+    // silently fail
+  }
+}
+
+function renderTmuxBar() {
+  const bar = document.getElementById("tmux-bar");
+  if (!bar) return;
+
+  if (!state.tmux.active || state.tmux.windows.length === 0) {
+    bar.classList.add("hidden");
+    return;
+  }
+
+  bar.classList.remove("hidden");
+  bar.innerHTML = "";
+
+  // Session label
+  if (state.tmux.session) {
+    const sessionLabel = document.createElement("span");
+    sessionLabel.className = "tmux-session-label";
+    sessionLabel.textContent = state.tmux.session;
+    bar.appendChild(sessionLabel);
+  }
+
+  // Tabs
+  const tabs = document.createElement("div");
+  tabs.className = "tmux-tabs";
+
+  state.tmux.windows.forEach((win) => {
+    const tab = document.createElement("button");
+    tab.className = "tmux-tab" + (win.active ? " active" : "");
+
+    let tabContent = escapeHtml(win.name);
+    if (win.pane_count > 1) {
+      tabContent += ` <span class="tmux-pane-badge">${win.pane_count}</span>`;
+    }
+
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "tmux-tab-close";
+    closeBtn.innerHTML = "&times;";
+    closeBtn.title = "Close window";
+    closeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      tmuxKillWindow(win.index);
+    });
+
+    tab.innerHTML = tabContent;
+    tab.appendChild(closeBtn);
+
+    tab.addEventListener("click", () => tmuxSelectWindow(win.index));
+    tab.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showTmuxContextMenu(e.clientX, e.clientY, win);
+    });
+
+    tabs.appendChild(tab);
+  });
+
+  bar.appendChild(tabs);
+
+  // Add button
+  const addBtn = document.createElement("button");
+  addBtn.className = "tmux-add-btn";
+  addBtn.innerHTML = "+";
+  addBtn.title = "New window";
+  addBtn.addEventListener("click", tmuxNewWindow);
+  bar.appendChild(addBtn);
+
+  // Action buttons
+  const actions = document.createElement("div");
+  actions.className = "tmux-actions";
+
+  const splitH = document.createElement("button");
+  splitH.className = "btn btn-icon";
+  splitH.title = "Split horizontally";
+  splitH.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M14 1H2a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/><path d="M7.5 1v14h1V1h-1z"/></svg>`;
+  splitH.addEventListener("click", () => tmuxSplitPane("h"));
+
+  const splitV = document.createElement("button");
+  splitV.className = "btn btn-icon";
+  splitV.title = "Split vertically";
+  splitV.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M14 1H2a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/><path d="M1 7.5h14v1H1v-1z"/></svg>`;
+  splitV.addEventListener("click", () => tmuxSplitPane("v"));
+
+  actions.appendChild(splitH);
+  actions.appendChild(splitV);
+  bar.appendChild(actions);
+}
+
+function showTmuxContextMenu(x, y, win) {
+  hideContextMenu();
+
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.id = "context-menu";
+
+  const renameItem = document.createElement("div");
+  renameItem.className = "context-menu-item";
+  renameItem.textContent = "Rename";
+  renameItem.addEventListener("click", () => {
+    hideContextMenu();
+    tmuxRenameWindow(win.index);
+  });
+  menu.appendChild(renameItem);
+
+  const sep = document.createElement("div");
+  sep.className = "context-menu-separator";
+  menu.appendChild(sep);
+
+  const closeItem = document.createElement("div");
+  closeItem.className = "context-menu-item danger";
+  closeItem.textContent = "Close Window";
+  closeItem.addEventListener("click", () => {
+    hideContextMenu();
+    tmuxKillWindow(win.index);
+  });
+  menu.appendChild(closeItem);
+
+  document.body.appendChild(menu);
+
+  const rect = menu.getBoundingClientRect();
+  if (x + rect.width > window.innerWidth)
+    x = window.innerWidth - rect.width - 8;
+  if (y + rect.height > window.innerHeight)
+    y = window.innerHeight - rect.height - 8;
+  menu.style.left = x + "px";
+  menu.style.top = y + "px";
+
+  setTimeout(() => {
+    document.addEventListener("click", hideContextMenu, { once: true });
+    document.addEventListener("contextmenu", hideContextMenu, { once: true });
+  }, 0);
+  document.addEventListener("keydown", handleContextMenuKey);
+}
+
+async function tmuxNewWindow() {
+  try {
+    await fetch("/api/tmux/new-window", { method: "POST" });
+    await refreshTmuxState();
+  } catch (e) {
+    showNotification("Failed to create window: " + e.message, "error");
+  }
+}
+
+async function tmuxSelectWindow(index) {
+  try {
+    await fetch("/api/tmux/select-window", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ index }),
+    });
+    await refreshTmuxState();
+  } catch (e) {
+    showNotification("Failed to select window: " + e.message, "error");
+  }
+}
+
+function tmuxRenameWindow(index) {
+  const win = state.tmux.windows.find((w) => w.index === index);
+  const currentName = win ? win.name : "";
+  const name = prompt("Rename window:", currentName);
+  if (name === null) return;
+
+  fetch("/api/tmux/rename-window", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ index, name }),
+  })
+    .then(() => refreshTmuxState())
+    .catch((e) => showNotification("Rename failed: " + e.message, "error"));
+}
+
+async function tmuxKillWindow(index) {
+  if (!confirm("Close this tmux window?")) return;
+  try {
+    await fetch("/api/tmux/kill-window", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ index }),
+    });
+    await refreshTmuxState();
+  } catch (e) {
+    showNotification("Failed to close window: " + e.message, "error");
+  }
+}
+
+async function tmuxSplitPane(direction) {
+  try {
+    await fetch("/api/tmux/split-pane", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ direction }),
+    });
+    await refreshTmuxState();
+  } catch (e) {
+    showNotification("Failed to split pane: " + e.message, "error");
+  }
+}
+
+// ── Package Manager ──────────────────────────────────────────────────
+
+async function openPackageManager() {
+  const panel = document.getElementById("package-panel");
+  if (!panel) return;
+
+  state.packagePanel.open = true;
+  state.packagePanel.loading = true;
+  panel.classList.remove("hidden");
+  renderPackagePanel();
+
+  try {
+    const detectResp = await fetch("/api/packages/detect");
+    state.packagePanel.detectInfo = await detectResp.json();
+
+    // Use first nearby venv or active venv
+    if (state.packagePanel.detectInfo.active_venv) {
+      state.packagePanel.venvPath = state.packagePanel.detectInfo.active_venv;
+    } else if (
+      state.packagePanel.detectInfo.nearby_venvs &&
+      state.packagePanel.detectInfo.nearby_venvs.length > 0
+    ) {
+      state.packagePanel.venvPath =
+        state.packagePanel.detectInfo.nearby_venvs[0];
+    }
+
+    await fetchPackageList();
+  } catch (e) {
+    state.packagePanel.loading = false;
+    renderPackagePanel();
+    showNotification("Failed to detect packages: " + e.message, "error");
+  }
+}
+
+function closePackageManager() {
+  const panel = document.getElementById("package-panel");
+  if (panel) panel.classList.add("hidden");
+  state.packagePanel.open = false;
+}
+
+async function fetchPackageList() {
+  state.packagePanel.loading = true;
+  renderPackagePanel();
+
+  try {
+    const resp = await fetch("/api/packages/list", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ venv_path: state.packagePanel.venvPath }),
+    });
+    const data = await resp.json();
+    state.packagePanel.packages = data.packages || [];
+  } catch {
+    state.packagePanel.packages = [];
+  }
+
+  state.packagePanel.loading = false;
+  renderPackagePanel();
+}
+
+function renderPackagePanel() {
+  const panel = document.getElementById("package-panel");
+  if (!panel) return;
+
+  const info = state.packagePanel.detectInfo;
+  const mgr =
+    info && info.has_uv ? "uv" : info && info.has_pip ? "pip" : "none";
+
+  let venvOptions = '<option value="">System</option>';
+  if (info && info.nearby_venvs) {
+    info.nearby_venvs.forEach((v) => {
+      const selected = v === state.packagePanel.venvPath ? " selected" : "";
+      const name = v.split("/").slice(-2).join("/");
+      venvOptions += `<option value="${escapeAttr(v)}"${selected}>${escapeHtml(name)}</option>`;
+    });
+  }
+
+  let listHtml;
+  if (state.packagePanel.loading) {
+    listHtml =
+      '<div class="package-loading"><span class="loading"></span></div>';
+  } else {
+    const filter = state.packagePanel.filter.toLowerCase();
+    const filtered = state.packagePanel.packages.filter(
+      (p) => !filter || p.name.toLowerCase().includes(filter),
+    );
+
+    if (filtered.length === 0) {
+      listHtml = '<div class="package-empty">No packages found</div>';
+    } else {
+      listHtml = filtered
+        .map(
+          (p) => `<div class="package-row">
+          <span class="package-name">${escapeHtml(p.name)}</span>
+          <span class="package-version">${escapeHtml(p.version)}</span>
+          <button class="package-uninstall" onclick="uninstallPackage('${escapeAttr(p.name)}')">Remove</button>
+        </div>`,
+        )
+        .join("");
+    }
+  }
+
+  panel.innerHTML = `
+    <div class="package-header">
+      <div class="package-header-left">
+        <span class="package-title">Packages</span>
+        <span class="package-badge">${mgr}</span>
+      </div>
+      <button class="package-close" onclick="closePackageManager()">&times;</button>
+    </div>
+    <div class="package-venv-bar">
+      <select class="venv-selector" onchange="switchVenv(this.value)">
+        ${venvOptions}
+      </select>
+    </div>
+    <div class="package-search">
+      <input type="text" placeholder="Filter packages..." value="${escapeAttr(state.packagePanel.filter)}" oninput="state.packagePanel.filter = this.value; renderPackagePanel();" />
+    </div>
+    <div class="package-list">${listHtml}</div>
+    <div class="package-install-bar">
+      <input type="text" id="package-install-input" placeholder="Package name..." onkeydown="if(event.key==='Enter'){event.preventDefault();installPackageFromInput();}" />
+      <button class="package-install-btn" onclick="installPackageFromInput()">Install</button>
+    </div>
+  `;
+}
+
+async function installPackageFromInput() {
+  const input = document.getElementById("package-install-input");
+  if (!input || !input.value.trim()) return;
+
+  const name = input.value.trim();
+  input.disabled = true;
+
+  try {
+    const resp = await fetch("/api/packages/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        package: name,
+        venv_path: state.packagePanel.venvPath,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showNotification("Install failed: " + data.error, "error");
+    } else {
+      showNotification(`Installed ${name}`, "success");
+      input.value = "";
+      await fetchPackageList();
+    }
+  } catch (e) {
+    showNotification("Install failed: " + e.message, "error");
+  } finally {
+    input.disabled = false;
+  }
+}
+
+async function uninstallPackage(name) {
+  if (!confirm(`Uninstall ${name}?`)) return;
+
+  try {
+    const resp = await fetch("/api/packages/uninstall", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        package: name,
+        venv_path: state.packagePanel.venvPath,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showNotification("Uninstall failed: " + data.error, "error");
+    } else {
+      showNotification(`Uninstalled ${name}`, "success");
+      await fetchPackageList();
+    }
+  } catch (e) {
+    showNotification("Uninstall failed: " + e.message, "error");
+  }
+}
+
+async function switchVenv(path) {
+  state.packagePanel.venvPath = path || null;
+  await fetchPackageList();
 }
