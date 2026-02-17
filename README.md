@@ -1,5 +1,7 @@
 # SSH GUI
 
+I have a computer science degree and I still can't remember anything beyond `cd` and `ls`. Every time I need to do something on a remote server it's 10 minutes of Googling basic commands I've already Googled 400 times. So I built this - a nice GUI that lets me SSH into a remote server and do all the common file operations by just clicking around like a normal person. The terminal is still there for when I'm feeling brave.
+
 A web-based SSH file browser and terminal. Connects to remote servers via SSH and provides a Finder-like column view for navigating the filesystem, alongside an integrated terminal.
 
 ## Features
