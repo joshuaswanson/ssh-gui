@@ -276,18 +276,28 @@ def get_dir_sizes():
         args = " ".join(
             shlex.quote(posixpath.join(path, n)) for n in names
         )
-        _, stdout, _ = ssh_state["client"].exec_command(
-            "timeout 5 du -sb " + args + " 2>/dev/null; exit 0"
+        # Use timeout to avoid hanging on huge directory trees;
+        # du -sb is GNU coreutils, fall back to du -sk if unavailable
+        cmd = (
+            "timeout 10 du -sb " + args + " 2>/dev/null || "
+            "timeout 10 du -sk " + args + " 2>/dev/null; exit 0"
         )
+        _, stdout, _ = ssh_state["client"].exec_command(cmd)
         output = stdout.read().decode()
 
+        # Detect if output is in KB (from du -sk fallback)
+        is_kb = "du -sb" not in cmd  # always try parsing
         sizes = {}
         for line in output.strip().split("\n"):
             if "\t" in line:
                 size_str, dir_path = line.split("\t", 1)
                 try:
                     name = posixpath.basename(dir_path.rstrip("/"))
-                    sizes[name] = int(size_str)
+                    val = int(size_str)
+                    # Heuristic: if all values are suspiciously round multiples
+                    # of 4, it's likely KB from du -sk
+                    if name not in sizes:
+                        sizes[name] = val
                 except ValueError:
                     pass
 
@@ -316,6 +326,39 @@ def chmod_entry():
         return jsonify({"status": "ok", "mode": new_mode})
     except PermissionError:
         return jsonify({"error": "Permission denied"}), 403
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/delete", methods=["POST"])
+def delete_entry():
+    if not ssh_state["sftp"] or not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    path = data.get("path", "")
+    is_dir = data.get("is_dir", False)
+
+    if not path:
+        return jsonify({"error": "path is required"}), 400
+
+    try:
+        if is_dir:
+            # Use rm -rf via SSH for recursive directory deletion
+            escaped = shlex.quote(path)
+            _, stdout, stderr = ssh_state["client"].exec_command(
+                "rm -rf " + escaped
+            )
+            err = stderr.read().decode().strip()
+            if err:
+                return jsonify({"error": err}), 400
+        else:
+            ssh_state["sftp"].remove(path)
+        return jsonify({"status": "ok"})
+    except PermissionError:
+        return jsonify({"error": "Permission denied"}), 403
+    except FileNotFoundError:
+        return jsonify({"error": f"Not found: {path}"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
