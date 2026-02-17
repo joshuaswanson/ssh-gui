@@ -93,12 +93,7 @@ async function loadSSHConfigs() {
         .addEventListener("click", () => connectToHost(host));
       card.querySelector(".host-star").addEventListener("click", (e) => {
         e.stopPropagation();
-        toggleStarHost(host.name);
-        // Animate out then reload
-        card.style.transition = "opacity 0.2s ease, transform 0.2s ease";
-        card.style.opacity = "0";
-        card.style.transform = "scale(0.95)";
-        setTimeout(() => loadSSHConfigs(), 200);
+        animateStarToggle(card, host.name);
       });
       return card;
     }
@@ -142,6 +137,64 @@ function toggleStarHost(name) {
     starred.add(name);
   }
   localStorage.setItem("starredHosts", JSON.stringify([...starred]));
+}
+
+async function animateStarToggle(card, hostName) {
+  const starredEl = document.getElementById("starred-hosts");
+  const savedEl = document.getElementById("saved-hosts");
+  const oldStarredH = starredEl.offsetHeight;
+  const oldSavedH = savedEl.offsetHeight;
+
+  // Fade out the card
+  card.style.transition = "opacity 0.15s ease, transform 0.15s ease";
+  card.style.opacity = "0";
+  card.style.transform = "scale(0.95)";
+  await new Promise((r) => setTimeout(r, 150));
+
+  toggleStarHost(hostName);
+
+  // Lock both containers at their current heights
+  starredEl.style.height = oldStarredH + "px";
+  starredEl.style.overflow = "hidden";
+  savedEl.style.maxHeight = "none";
+  savedEl.style.height = oldSavedH + "px";
+  savedEl.style.overflow = "hidden";
+  savedEl.style.maskImage = "none";
+  savedEl.style.webkitMaskImage = "none";
+
+  await loadSSHConfigs();
+
+  // Measure new natural heights
+  starredEl.style.height = "auto";
+  const newStarredH = starredEl.offsetHeight;
+  starredEl.style.height = oldStarredH + "px";
+
+  savedEl.style.height = "auto";
+  savedEl.style.maxHeight = "";
+  const newSavedH = savedEl.offsetHeight;
+  savedEl.style.height = oldSavedH + "px";
+  savedEl.style.maxHeight = "none";
+
+  // Force reflow
+  void starredEl.offsetHeight;
+
+  // Animate to new heights
+  starredEl.style.transition = "height 0.3s ease";
+  savedEl.style.transition = "height 0.3s ease";
+  starredEl.style.height = newStarredH + "px";
+  savedEl.style.height = newSavedH + "px";
+
+  setTimeout(() => {
+    starredEl.style.height = "";
+    starredEl.style.overflow = "";
+    starredEl.style.transition = "";
+    savedEl.style.height = "";
+    savedEl.style.overflow = "";
+    savedEl.style.maxHeight = "";
+    savedEl.style.transition = "";
+    savedEl.style.maskImage = "";
+    savedEl.style.webkitMaskImage = "";
+  }, 310);
 }
 
 // ── Connection ───────────────────────────────────────────────────────
