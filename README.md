@@ -2,6 +2,8 @@
 
 When I first started SSHing into remote servers, everything felt unintuitive. There was no visual feedback, no way to just browse around and see what was where. I spent more time looking up commands than actually getting work done. So I built this: a Finder-style GUI for remote servers that lets you browse files, manage folders, and handle common tasks visually, while keeping a full terminal right below. The idea is to give people coming from a GUI background a familiar starting point. As you get more comfortable, the terminal is always there, and you'll naturally start reaching for it. If you know how to use Finder on macOS, you already know how to use this.
 
+When I first started SSHing into remote servers, everything felt unintuitive. There was no visual feedback, no way to just browse around and see what was where. I spent more time looking up commands than actually getting work done. So I built this: a Finder-style GUI for remote servers that lets you browse files, manage folders, and handle common tasks visually, while keeping a full terminal right below. The idea is to give people coming from a GUI background a familiar starting point. As you get more comfortable, the terminal is always there, and you'll naturally start reaching for it. If you know how to use Finder on macOS, you already know how to use this.
+
 ## Features
 
 - **Column browser** -Navigate remote filesystems in a multi-column Finder-style view
