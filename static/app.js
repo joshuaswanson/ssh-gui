@@ -444,6 +444,7 @@ function onConnected(data) {
     `${data.username}@${data.host}`;
 
   showScreen("main");
+  seedSidebarIfNew();
   renderSidebar();
   navigateTo(data.home_dir);
   initTerminal();
@@ -508,6 +509,7 @@ async function navigateTo(path) {
     renderColumns();
     updateBreadcrumb();
     fetchDirSizes(0);
+    fetchGitBranch(data.path);
   } catch (e) {
     showNotification("Failed to browse: " + e.message, "error");
   }
@@ -1367,6 +1369,22 @@ async function fetchGitInfo(filePath, colIndex) {
   }
 }
 
+async function fetchGitBranch(dirPath) {
+  try {
+    const resp = await fetch("/api/git-info", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: dirPath + "/." }),
+    });
+    const data = await resp.json();
+    state.gitBranch = data.branch || null;
+    updatePathBar();
+  } catch {
+    state.gitBranch = null;
+    updatePathBar();
+  }
+}
+
 function toggleHiddenFiles() {
   state.showHidden = document.getElementById("hidden-toggle").checked;
   renderColumns();
@@ -2214,20 +2232,18 @@ function saveSidebarShortcuts(host, shortcuts) {
   localStorage.setItem("shortcuts:" + host, JSON.stringify(shortcuts));
 }
 
-function ensureHomeInShortcuts() {
-  const shortcuts = getSidebarShortcuts(state.host);
-  if (shortcuts.length === 0) {
+function seedSidebarIfNew() {
+  const key = "shortcuts:" + state.host;
+  // Only seed if this host has never had shortcuts set (null, not "[]")
+  if (localStorage.getItem(key) === null) {
     const homeName = "~" + (state.homeDir.split("/").pop() || "");
-    shortcuts.push({ path: state.homeDir, name: homeName });
-    saveSidebarShortcuts(state.host, shortcuts);
+    saveSidebarShortcuts(state.host, [{ path: state.homeDir, name: homeName }]);
   }
 }
 
 function renderSidebar() {
   const sidebar = document.getElementById("sidebar");
   if (!sidebar || !state.connected) return;
-
-  ensureHomeInShortcuts();
   sidebar.innerHTML = "";
 
   const section = document.createElement("div");
@@ -2354,8 +2370,10 @@ function showSidebarContextMenu(x, y, shortcutIndex) {
 
   const removeItem = document.createElement("div");
   removeItem.className = "context-menu-item danger";
-  removeItem.textContent = "Remove";
-  removeItem.addEventListener("click", () => {
+  removeItem.textContent = "Remove from Favorites";
+  removeItem.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     hideContextMenu();
     const shortcuts = getSidebarShortcuts(state.host);
     shortcuts.splice(shortcutIndex, 1);
