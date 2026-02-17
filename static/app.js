@@ -15,7 +15,10 @@ const state = {
   sortMode: "name",
   sortAsc: true,
   dragSources: [],
+  renaming: null, // { colIndex, name } when inline rename is active
 };
+
+let selectGeneration = 0;
 
 // ── Icons ────────────────────────────────────────────────────────────
 
@@ -29,6 +32,10 @@ const FILE_ICON = `<svg width="16" height="16" viewBox="0 0 16 16" fill="#8b949e
 
 const FILE_ICON_LARGE = `<svg width="48" height="48" viewBox="0 0 16 16" fill="#58a6ff" opacity="0.5">
   <path d="M3.75 1.5a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25V6H9.75A1.75 1.75 0 0 1 8 4.25V1.5H3.75zm5.75.56v2.19c0 .138.112.25.25.25h2.19L9.5 2.06zM2 1.75C2 .784 2.784 0 3.75 0h5.086c.464 0 .909.184 1.237.513l3.414 3.414c.329.328.513.773.513 1.237v8.086A1.75 1.75 0 0 1 12.25 15h-8.5A1.75 1.75 0 0 1 2 13.25V1.75z"/>
+</svg>`;
+
+const COPY_ICON = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+  <path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25ZM5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/>
 </svg>`;
 
 // ── Initialization ───────────────────────────────────────────────────
@@ -251,12 +258,12 @@ function navigateHome() {
 }
 
 async function selectEntry(colIndex, entry, opts = {}) {
+  const gen = ++selectGeneration;
   const column = state.columns[colIndex];
   const entries = getVisibleEntries(column);
   const clickedIndex = entries.findIndex((e) => e.name === entry.name);
 
   if (opts.shift && column.lastClickedIndex >= 0) {
-    // Range select from anchor to clickedIndex
     const start = Math.min(column.lastClickedIndex, clickedIndex);
     const end = Math.max(column.lastClickedIndex, clickedIndex);
     column.selected = new Set();
@@ -265,7 +272,6 @@ async function selectEntry(colIndex, entry, opts = {}) {
     }
     column.selectionCursor = clickedIndex;
   } else {
-    // Single select -- clear others
     column.selected = new Set([entry.name]);
     column.lastClickedIndex = clickedIndex;
     column.selectionCursor = clickedIndex;
@@ -278,6 +284,10 @@ async function selectEntry(colIndex, entry, opts = {}) {
     const newPath =
       currentPath === "/" ? "/" + entry.name : currentPath + "/" + entry.name;
 
+    // Render immediately to show selection before fetch completes
+    state.focusedColumn = colIndex;
+    renderColumns();
+
     try {
       const response = await fetch("/api/ls", {
         method: "POST",
@@ -285,8 +295,12 @@ async function selectEntry(colIndex, entry, opts = {}) {
         body: JSON.stringify({ path: newPath }),
       });
 
+      if (gen !== selectGeneration) return; // stale
+
       if (response.ok) {
         const data = await response.json();
+        // Re-truncate in case state changed during await
+        state.columns = state.columns.slice(0, colIndex + 1);
         state.columns.push({
           path: data.path,
           entries: data.entries,
@@ -296,6 +310,7 @@ async function selectEntry(colIndex, entry, opts = {}) {
         });
       } else {
         const err = await response.json();
+        state.columns = state.columns.slice(0, colIndex + 1);
         state.columns.push({
           path: newPath,
           entries: [],
@@ -306,16 +321,18 @@ async function selectEntry(colIndex, entry, opts = {}) {
         });
       }
     } catch (e) {
+      if (gen !== selectGeneration) return;
+      state.columns = state.columns.slice(0, colIndex + 1);
       state.columns.push({
         path: newPath,
         entries: [],
         selected: new Set(),
         lastClickedIndex: -1,
+        selectionCursor: -1,
         error: e.message,
       });
     }
   } else {
-    // File selected -- show info panel + preview column
     const currentPath = state.columns[colIndex].path;
     const filePath =
       currentPath === "/" ? "/" + entry.name : currentPath + "/" + entry.name;
@@ -338,7 +355,6 @@ async function selectEntry(colIndex, entry, opts = {}) {
       fileInfo,
     });
 
-    // Add preview column for text files under 1MB
     if (entry.size <= 1024 * 1024) {
       state.columns.push({
         path: null,
@@ -356,7 +372,6 @@ async function selectEntry(colIndex, entry, opts = {}) {
   renderColumns();
   updateBreadcrumb();
 
-  // Auto-scroll to show the new column
   const columnsEl = document.getElementById("columns");
   setTimeout(() => {
     columnsEl.scrollTo({
@@ -428,7 +443,9 @@ function sortEntries(entries, mode, asc) {
     }
     case "size": {
       sorted.sort((a, b) => {
-        if (a.size !== b.size) return (a.size - b.size) * dir;
+        // Folders at end in size sort (no meaningful size)
+        if (a.is_dir !== b.is_dir) return a.is_dir ? 1 : -1;
+        if (!a.is_dir && a.size !== b.size) return (a.size - b.size) * dir;
         return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
       });
       break;
@@ -451,13 +468,23 @@ function getExtension(name) {
 
 function changeSort() {
   const select = document.getElementById("sort-select");
-  if (state.sortMode === select.value) {
-    state.sortAsc = !state.sortAsc;
-  } else {
-    state.sortMode = select.value;
-    state.sortAsc = true;
-  }
+  state.sortMode = select.value;
   renderColumns();
+  updateSortDirIcon();
+}
+
+function toggleSortDirection() {
+  state.sortAsc = !state.sortAsc;
+  renderColumns();
+  updateSortDirIcon();
+}
+
+function updateSortDirIcon() {
+  const btn = document.getElementById("sort-dir-btn");
+  if (btn) {
+    btn.title = state.sortAsc ? "Ascending" : "Descending";
+    btn.style.transform = state.sortAsc ? "" : "scaleY(-1)";
+  }
 }
 
 function renderColumns() {
@@ -532,12 +559,8 @@ function renderColumns() {
       colEl.innerHTML = `
                 <div class="file-info-header">
                     <div class="file-info-icon">${FILE_ICON_LARGE}</div>
-                    <div class="file-info-name">${escapeHtml(info.name)}</div>
+                    <div class="file-info-name">${escapeHtml(info.name)} <span class="copy-icon" onclick="copyToClipboard('${escapeAttr(info.name)}')" title="Copy name">${COPY_ICON}</span></div>
                     ${info.is_link ? '<div class="file-info-badge">Symlink</div>' : ""}
-                </div>
-                <div class="file-info-actions">
-                    <button class="btn-copy" onclick="copyToClipboard('${escapeAttr(info.name)}')" title="Copy name">Copy Name</button>
-                    <button class="btn-copy" onclick="copyToClipboard('${escapeAttr(info.path)}')" title="Copy path">Copy Path</button>
                 </div>
                 <div class="file-info-details">
                     <div class="file-info-section">
@@ -552,7 +575,7 @@ function renderColumns() {
                         </div>
                         <div class="file-info-row">
                             <span class="label">Path</span>
-                            <span class="value value-path">${escapeHtml(info.path)}</span>
+                            <span class="value value-path">${escapeHtml(info.path)} <span class="copy-icon" onclick="copyToClipboard('${escapeAttr(info.path)}')" title="Copy path">${COPY_ICON}</span></span>
                         </div>
                     </div>
                     <div class="file-info-section">
@@ -627,31 +650,65 @@ function renderColumns() {
         entryEl.classList.add("selected");
       }
 
-      // Drag-and-drop attributes
-      entryEl.draggable = true;
+      // Check if this entry is being renamed
+      const isRenaming =
+        state.renaming &&
+        state.renaming.colIndex === colIndex &&
+        state.renaming.name === entry.name;
+
+      // Drag-and-drop attributes (not while renaming)
+      entryEl.draggable = !isRenaming;
 
       const icon = entry.is_dir ? FOLDER_ICON : FILE_ICON;
       const linkClass = entry.is_link ? " is-link" : "";
 
       let rightContent;
       if (entry.is_dir) {
-        rightContent = `<span class="entry-size">${formatSize(entry.size)}</span><span class="entry-chevron">&#x203A;</span>`;
+        rightContent =
+          '<span class="entry-size">--</span><span class="entry-chevron">&#x203A;</span>';
       } else {
         rightContent = `<span class="entry-size">${formatSize(entry.size)}</span>`;
       }
 
-      entryEl.innerHTML = `
-                <span class="entry-icon">${icon}</span>
-                <span class="entry-name${linkClass}">${escapeHtml(entry.name)}</span>
-                ${rightContent}
-            `;
+      if (isRenaming) {
+        entryEl.innerHTML = `
+                  <span class="entry-icon">${icon}</span>
+                  <input id="rename-input" class="rename-input" type="text" value="${escapeAttr(entry.name)}" />
+              `;
+        // Set up rename input event handlers after appending
+        setTimeout(() => {
+          const input = document.getElementById("rename-input");
+          if (!input) return;
+          input.addEventListener("keydown", (e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitRename(colIndex, entry.name, input.value.trim());
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              cancelRename();
+            }
+          });
+          input.addEventListener("blur", () => {
+            if (state.renaming) cancelRename();
+          });
+        }, 0);
+      } else {
+        entryEl.innerHTML = `
+                  <span class="entry-icon">${icon}</span>
+                  <span class="entry-name${linkClass}">${escapeHtml(entry.name)}</span>
+                  ${rightContent}
+              `;
+      }
 
       // Click handler with shift support
-      entryEl.addEventListener("click", (e) => {
-        state.focusedColumn = colIndex;
-        selectEntry(colIndex, entry, { shift: e.shiftKey });
-        focusColumns();
-      });
+      if (!isRenaming) {
+        entryEl.addEventListener("click", (e) => {
+          state.focusedColumn = colIndex;
+          selectEntry(colIndex, entry, { shift: e.shiftKey });
+          focusColumns();
+        });
+      }
 
       // Drag start
       entryEl.addEventListener("dragstart", (e) => {
@@ -709,6 +766,20 @@ function renderColumns() {
       }
 
       colEl.appendChild(entryEl);
+    });
+
+    // Click on blank space to deselect
+    colEl.addEventListener("click", (e) => {
+      if (e.target === colEl) {
+        column.selected = new Set();
+        column.lastClickedIndex = -1;
+        column.selectionCursor = -1;
+        state.columns = state.columns.slice(0, colIndex + 1);
+        state.focusedColumn = colIndex;
+        renderColumns();
+        updateBreadcrumb();
+        focusColumns();
+      }
     });
 
     // Column-level drop target: drop into this column's directory
@@ -926,13 +997,23 @@ function handleKeyNavigation(e) {
           return entries.findIndex((en) => en.name === last);
         })();
 
+  // Cancel rename on any navigation key
+  if (state.renaming) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      cancelRename();
+      return;
+    }
+    // Let the input handle other keys
+    return;
+  }
+
   switch (e.key) {
     case "ArrowDown": {
       e.preventDefault();
       const next =
         cursorIdx < 0 ? 0 : Math.min(cursorIdx + 1, entries.length - 1);
       if (e.shiftKey) {
-        // Recompute range from anchor to new cursor
         const anchor =
           column.lastClickedIndex >= 0 ? column.lastClickedIndex : next;
         const start = Math.min(anchor, next);
@@ -942,14 +1023,16 @@ function handleKeyNavigation(e) {
           column.selected.add(entries[i].name);
         }
         column.selectionCursor = next;
+        renderColumns();
+        scrollEntryIntoView(fc, next);
+        focusColumns();
       } else {
-        column.selected = new Set([entries[next].name]);
-        column.lastClickedIndex = next;
-        column.selectionCursor = next;
+        // Auto-open: select and show contents
+        selectEntry(fc, entries[next]).then(() => {
+          scrollEntryIntoView(fc, next);
+          focusColumns();
+        });
       }
-      renderColumns();
-      scrollEntryIntoView(fc, next);
-      focusColumns();
       break;
     }
     case "ArrowUp": {
@@ -957,7 +1040,6 @@ function handleKeyNavigation(e) {
       const prev =
         cursorIdx < 0 ? entries.length - 1 : Math.max(cursorIdx - 1, 0);
       if (e.shiftKey) {
-        // Recompute range from anchor to new cursor
         const anchor =
           column.lastClickedIndex >= 0 ? column.lastClickedIndex : prev;
         const start = Math.min(anchor, prev);
@@ -967,47 +1049,62 @@ function handleKeyNavigation(e) {
           column.selected.add(entries[i].name);
         }
         column.selectionCursor = prev;
+        renderColumns();
+        scrollEntryIntoView(fc, prev);
+        focusColumns();
       } else {
-        column.selected = new Set([entries[prev].name]);
-        column.lastClickedIndex = prev;
-        column.selectionCursor = prev;
+        selectEntry(fc, entries[prev]).then(() => {
+          scrollEntryIntoView(fc, prev);
+          focusColumns();
+        });
       }
-      renderColumns();
-      scrollEntryIntoView(fc, prev);
-      focusColumns();
       break;
     }
-    case "ArrowRight":
+    case "ArrowRight": {
+      e.preventDefault();
+      if (state.columns.length > fc + 1) {
+        // Move focus into the next column
+        state.focusedColumn = fc + 1;
+        const newCol = state.columns[fc + 1];
+        const newEntries = getVisibleEntries(newCol);
+        if (newEntries.length > 0 && newCol.selected.size === 0) {
+          // Auto-select and open first entry
+          selectEntry(fc + 1, newEntries[0]).then(() => focusColumns());
+        } else {
+          renderColumns();
+          focusColumns();
+        }
+      }
+      break;
+    }
     case "Enter": {
       e.preventDefault();
-      if (cursorIdx >= 0) {
-        selectEntry(fc, entries[cursorIdx]).then(() => {
-          // Move focus into the new column if it has entries
-          if (state.columns.length > fc + 1) {
-            state.focusedColumn = fc + 1;
-            renderColumns();
-            focusColumns();
-          }
-        });
-      } else if (entries.length > 0) {
-        column.selected = new Set([entries[0].name]);
-        column.lastClickedIndex = 0;
-        column.selectionCursor = 0;
-        renderColumns();
-        focusColumns();
+      if (cursorIdx >= 0 && column.selected.size === 1) {
+        startRename(fc, entries[cursorIdx].name);
       }
       break;
     }
     case "ArrowLeft": {
       e.preventDefault();
       if (fc > 0) {
-        // Go back: truncate columns after parent, keep parent's selection
         state.columns = state.columns.slice(0, fc);
         state.focusedColumn = fc - 1;
         renderColumns();
         updateBreadcrumb();
         focusColumns();
       }
+      break;
+    }
+    case "Escape": {
+      e.preventDefault();
+      // Clear selection
+      column.selected = new Set();
+      column.lastClickedIndex = -1;
+      column.selectionCursor = -1;
+      state.columns = state.columns.slice(0, fc + 1);
+      renderColumns();
+      updateBreadcrumb();
+      focusColumns();
       break;
     }
   }
@@ -1165,6 +1262,67 @@ function copyToClipboard(text) {
 
 function escapeAttr(str) {
   return str.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+// ── Rename ───────────────────────────────────────────────────────────
+
+function startRename(colIndex, name) {
+  state.renaming = { colIndex, name };
+  renderColumns();
+
+  // Focus the rename input
+  const input = document.getElementById("rename-input");
+  if (input) {
+    input.focus();
+    // Select name without extension for files
+    const dot = name.lastIndexOf(".");
+    if (dot > 0) {
+      input.setSelectionRange(0, dot);
+    } else {
+      input.select();
+    }
+  }
+}
+
+function cancelRename() {
+  state.renaming = null;
+  renderColumns();
+  focusColumns();
+}
+
+async function commitRename(colIndex, oldName, newName) {
+  state.renaming = null;
+
+  if (!newName || newName === oldName) {
+    renderColumns();
+    focusColumns();
+    return;
+  }
+
+  const column = state.columns[colIndex];
+  if (!column || !column.path) return;
+
+  const oldPath =
+    column.path === "/" ? "/" + oldName : column.path + "/" + oldName;
+  const newPath =
+    column.path === "/" ? "/" + newName : column.path + "/" + newName;
+
+  try {
+    const resp = await fetch("/api/move", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ src: oldPath, dest: newPath }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      showNotification(err.error || "Rename failed", "error");
+    }
+  } catch (e) {
+    showNotification("Rename failed: " + e.message, "error");
+  }
+
+  await refreshColumns();
+  focusColumns();
 }
 
 // ── UI Helpers ───────────────────────────────────────────────────────
