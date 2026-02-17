@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SSH</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+  </head>
+  <body>
+    <!-- Connection Screen -->
+    <div id="connect-screen">
+      <div class="connect-container">
+        <div class="connect-header">
+          <h1>SSH</h1>
+          <p class="subtitle">Select a host or enter connection details</p>
+        </div>
+        <div id="saved-hosts" class="saved-hosts"></div>
+        <div class="divider"><span>or connect manually</span></div>
+        <form
+          id="connect-form"
+          class="connect-form"
+          onsubmit="handleManualConnect(event)"
+        >
+          <div class="form-row">
+            <div class="form-group flex-2">
+              <label for="host-input">Host</label>
+              <input
+                type="text"
+                id="host-input"
+                placeholder="hostname or IP"
+                required
+              />
+            </div>
+            <div class="form-group flex-1">
+              <label for="port-input">Port</label>
+              <input type="number" id="port-input" value="22" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="user-input">Username</label>
+              <input type="text" id="user-input" placeholder="username" />
+            </div>
+            <div class="form-group flex-1">
+              <label for="pass-input">Password</label>
+              <input type="password" id="pass-input" placeholder="optional" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="key-input">Identity File</label>
+            <input
+              type="text"
+              id="key-input"
+              placeholder="~/.ssh/id_rsa (optional)"
+            />
+          </div>
+          <button type="submit" class="btn btn-primary" id="connect-btn">
+            Connect
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Main Screen -->
+    <div id="main-screen" class="hidden">
+      <div id="toolbar">
+        <div class="toolbar-left">
+          <button class="btn btn-icon" onclick="navigateHome()" title="Home">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path
+                d="M8.354 1.146a.5.5 0 0 0-.708 0l-6.5 6.5a.5.5 0 0 0 .708.708L2 8.207V13.5A1.5 1.5 0 0 0 3.5 15h9a1.5 1.5 0 0 0 1.5-1.5V8.207l.146.147a.5.5 0 0 0 .708-.708l-6.5-6.5z"
+              />
+            </svg>
+          </button>
+          <div id="breadcrumb" class="breadcrumb"></div>
+        </div>
+        <div class="toolbar-right">
+          <label class="sort-label" for="sort-select">Sort by:</label>
+          <select id="sort-select" onchange="changeSort()">
+            <option value="name">Name</option>
+            <option value="kind">Kind</option>
+            <option value="size">Size</option>
+          </select>
+          <label class="toggle-label">
+            <input
+              type="checkbox"
+              id="hidden-toggle"
+              onchange="toggleHiddenFiles()"
+            />
+            <span>Show hidden</span>
+          </label>
+          <button
+            class="btn btn-icon"
+            onclick="cdToBrowserPath()"
+            title="cd to this directory in terminal"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path
+                d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 14.25 15H1.75A1.75 1.75 0 0 1 0 13.25Zm1.75-.25a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25ZM7.25 8a.749.749 0 0 1-.22.53l-2.25 2.25a.749.749 0 1 1-1.06-1.06L5.44 8 3.72 6.28a.749.749 0 1 1 1.06-1.06l2.25 2.25c.141.14.22.331.22.53Zm1.5 1.5h3a.75.75 0 0 1 0 1.5h-3a.75.75 0 0 1 0-1.5Z"
+              />
+            </svg>
+          </button>
+          <span id="connection-info" class="connection-info"></span>
+          <button class="btn btn-disconnect" onclick="handleDisconnect()">
+            Disconnect
+          </button>
+        </div>
+      </div>
+      <div id="browser-container">
+        <div id="columns"></div>
+      </div>
+      <div id="resize-handle"></div>
+      <div id="terminal-container">
+        <div id="terminal"></div>
+      </div>
+    </div>
+
+    <!-- Notification -->
+    <div id="notification" class="notification hidden"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>
