@@ -258,6 +258,30 @@ def list_directory():
         return jsonify({"error": str(e)}), 400
 
 
+@app.route("/api/chmod", methods=["POST"])
+def chmod_entry():
+    if not ssh_state["sftp"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    path = data.get("path", "")
+    mode = data.get("mode", 0)
+
+    if not path:
+        return jsonify({"error": "path is required"}), 400
+
+    try:
+        ssh_state["sftp"].chmod(path, mode)
+        # Return updated stat
+        new_stat = ssh_state["sftp"].stat(path)
+        new_mode = stat.filemode(new_stat.st_mode) if new_stat.st_mode else "?---------"
+        return jsonify({"status": "ok", "mode": new_mode})
+    except PermissionError:
+        return jsonify({"error": "Permission denied"}), 403
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
 @app.route("/api/move", methods=["POST"])
 def move_entry():
     if not ssh_state["sftp"]:

@@ -16,6 +16,7 @@ const state = {
   sortAsc: true,
   dragSources: [],
   renaming: null, // { colIndex, name } when inline rename is active
+  previewWrap: false,
 };
 
 let selectGeneration = 0;
@@ -525,7 +526,8 @@ function renderColumns() {
           .map((_, i) => `<span>${i + 1}</span>`)
           .join("\n");
         const code = escapeHtml(preview.content);
-        bodyHtml = `<div class="file-preview-code"><div class="file-preview-lines">${lineNums}</div><pre class="file-preview-content">${code}</pre></div>`;
+        const wrapClass = state.previewWrap ? " wrapped" : "";
+        bodyHtml = `<div class="file-preview-code"><div class="file-preview-lines">${lineNums}</div><pre class="file-preview-content${wrapClass}">${code}</pre></div>`;
         if (preview.truncated) {
           bodyHtml +=
             '<div class="file-preview-message">Truncated -- first 64KB shown</div>';
@@ -535,10 +537,21 @@ function renderColumns() {
           '<div class="file-preview-message">No preview available</div>';
       }
 
+      const wrapBtnClass = state.previewWrap ? " active" : "";
+      const wrapTitle = state.previewWrap
+        ? "Scroll horizontally"
+        : "Wrap lines";
       colEl.innerHTML = `
                 <div class="file-preview-header">
                     <span class="file-preview-title">${escapeHtml(preview.name)}</span>
-                    <span class="file-preview-readonly">Read-only</span>
+                    <div class="file-preview-actions">
+                        <button class="btn btn-icon preview-wrap-btn${wrapBtnClass}" onclick="togglePreviewWrap()" title="${wrapTitle}">
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M1.75 2a.75.75 0 0 0 0 1.5h12.5a.75.75 0 0 0 0-1.5H1.75zm0 5a.75.75 0 0 0 0 1.5h7.5c.69 0 1.25.56 1.25 1.25s-.56 1.25-1.25 1.25H8.5v-.75a.75.75 0 0 0-1.28-.53l-1.5 1.5a.75.75 0 0 0 0 1.06l1.5 1.5A.75.75 0 0 0 8.5 13v-.75h.75a2.75 2.75 0 0 0 0-5.5h-7.5zM1.75 14a.75.75 0 0 0 0 1.5h12.5a.75.75 0 0 0 0-1.5H1.75z"/>
+                            </svg>
+                        </button>
+                        <span class="file-preview-readonly">Read-only</span>
+                    </div>
                 </div>
                 ${bodyHtml}
             `;
@@ -555,6 +568,8 @@ function renderColumns() {
       colEl.className = "column file-info-panel";
       const info = column.fileInfo;
       const perms = humanizePermissions(info.mode);
+
+      const permBits = parseModeBits(info.mode);
 
       colEl.innerHTML = `
                 <div class="file-info-header">
@@ -580,18 +595,29 @@ function renderColumns() {
                     </div>
                     <div class="file-info-section">
                         <div class="file-info-section-title">Permissions <span class="file-info-raw-mode">${escapeHtml(info.mode)}</span></div>
-                        <div class="file-info-row">
-                            <span class="label">Owner</span>
-                            <span class="value">${perms.owner}</span>
-                        </div>
-                        <div class="file-info-row">
-                            <span class="label">Group</span>
-                            <span class="value">${perms.group}</span>
-                        </div>
-                        <div class="file-info-row">
-                            <span class="label">Others</span>
-                            <span class="value">${perms.others}</span>
-                        </div>
+                        <table class="chmod-table">
+                            <thead><tr><th></th><th>R</th><th>W</th><th>X</th></tr></thead>
+                            <tbody>
+                                <tr>
+                                    <td class="chmod-label">Owner</td>
+                                    ${chmodCell(info.path, permBits, "owner", "r")}
+                                    ${chmodCell(info.path, permBits, "owner", "w")}
+                                    ${chmodCell(info.path, permBits, "owner", "x")}
+                                </tr>
+                                <tr>
+                                    <td class="chmod-label">Group</td>
+                                    ${chmodCell(info.path, permBits, "group", "r")}
+                                    ${chmodCell(info.path, permBits, "group", "w")}
+                                    ${chmodCell(info.path, permBits, "group", "x")}
+                                </tr>
+                                <tr>
+                                    <td class="chmod-label">Others</td>
+                                    ${chmodCell(info.path, permBits, "others", "r")}
+                                    ${chmodCell(info.path, permBits, "others", "w")}
+                                    ${chmodCell(info.path, permBits, "others", "x")}
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             `;
@@ -1149,6 +1175,7 @@ function initTerminal() {
     state.terminal = new TerminalCtor({
       cursorBlink: true,
       fontSize: 13,
+      lineHeight: 1.2,
       fontFamily: "'SF Mono', 'Cascadia Code', 'Fira Code', Menlo, monospace",
       theme: {
         background: "#0d1117",
@@ -1250,6 +1277,85 @@ function cdToBrowserPath() {
     });
     state.terminal.focus();
   }
+}
+
+// ── Preview ─────────────────────────────────────────────────────────
+
+function togglePreviewWrap() {
+  state.previewWrap = !state.previewWrap;
+  renderColumns();
+}
+
+// ── Chmod ────────────────────────────────────────────────────────────
+
+function parseModeBits(modeStr) {
+  // Parse "-rwxrwxrwx" string into an object
+  if (!modeStr || modeStr.length < 10) return {};
+  return {
+    owner: {
+      r: modeStr[1] === "r",
+      w: modeStr[2] === "w",
+      x: "xsS".includes(modeStr[3]),
+    },
+    group: {
+      r: modeStr[4] === "r",
+      w: modeStr[5] === "w",
+      x: "xsS".includes(modeStr[6]),
+    },
+    others: {
+      r: modeStr[7] === "r",
+      w: modeStr[8] === "w",
+      x: "xtT".includes(modeStr[9]),
+    },
+  };
+}
+
+function permBitsToOctal(bits) {
+  function tripleToOctal(t) {
+    return (t.r ? 4 : 0) + (t.w ? 2 : 0) + (t.x ? 1 : 0);
+  }
+  if (!bits.owner) return 0;
+  return (
+    tripleToOctal(bits.owner) * 64 +
+    tripleToOctal(bits.group) * 8 +
+    tripleToOctal(bits.others)
+  );
+}
+
+function chmodCell(path, bits, who, perm) {
+  const checked = bits[who] && bits[who][perm] ? "checked" : "";
+  return `<td><input type="checkbox" class="chmod-check" ${checked} onchange="handleChmod('${escapeAttr(path)}', '${who}', '${perm}', this.checked)" /></td>`;
+}
+
+async function handleChmod(path, who, perm, value) {
+  // Find the info column for this path
+  const infoCol = state.columns.find(
+    (c) => c.fileInfo && c.fileInfo.path === path,
+  );
+  if (!infoCol) return;
+
+  // Parse current bits, update the toggled bit
+  const bits = parseModeBits(infoCol.fileInfo.mode);
+  if (bits[who]) bits[who][perm] = value;
+  const octal = permBitsToOctal(bits);
+
+  try {
+    const resp = await fetch("/api/chmod", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, mode: octal }),
+    });
+    const data = await resp.json();
+    if (data.mode) {
+      infoCol.fileInfo.mode = data.mode;
+    } else if (data.error) {
+      showNotification(data.error, "error");
+    }
+  } catch (e) {
+    showNotification("chmod failed: " + e.message, "error");
+  }
+
+  renderColumns();
 }
 
 // ── Clipboard ────────────────────────────────────────────────────────
