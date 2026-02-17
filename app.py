@@ -3,6 +3,8 @@ import stat
 import time
 import posixpath
 import threading
+import shlex
+import base64
 from pathlib import Path
 
 from flask import Flask, render_template, request, jsonify
@@ -258,6 +260,42 @@ def list_directory():
         return jsonify({"error": str(e)}), 400
 
 
+@app.route("/api/dir-sizes", methods=["POST"])
+def get_dir_sizes():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    path = data.get("path", "")
+    names = data.get("names", [])
+
+    if not path or not names:
+        return jsonify({"sizes": {}})
+
+    try:
+        args = " ".join(
+            shlex.quote(posixpath.join(path, n)) for n in names
+        )
+        _, stdout, _ = ssh_state["client"].exec_command(
+            "timeout 5 du -sb " + args + " 2>/dev/null; exit 0"
+        )
+        output = stdout.read().decode()
+
+        sizes = {}
+        for line in output.strip().split("\n"):
+            if "\t" in line:
+                size_str, dir_path = line.split("\t", 1)
+                try:
+                    name = posixpath.basename(dir_path.rstrip("/"))
+                    sizes[name] = int(size_str)
+                except ValueError:
+                    pass
+
+        return jsonify({"sizes": sizes})
+    except Exception:
+        return jsonify({"sizes": {}})
+
+
 @app.route("/api/chmod", methods=["POST"])
 def chmod_entry():
     if not ssh_state["sftp"]:
@@ -305,6 +343,19 @@ def move_entry():
         return jsonify({"error": str(e)}), 400
 
 
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg"}
+IMAGE_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+    ".svg": "image/svg+xml",
+}
+
+
 @app.route("/api/preview", methods=["POST"])
 def preview_file():
     if not ssh_state["sftp"]:
@@ -314,12 +365,25 @@ def preview_file():
     if not path:
         return jsonify({"error": "path is required"}), 400
 
-    max_bytes = 64 * 1024  # 64KB
-
     try:
         file_stat = ssh_state["sftp"].stat(path)
         file_size = file_stat.st_size if file_stat.st_size else 0
 
+        ext = posixpath.splitext(path)[1].lower()
+
+        # Image preview
+        if ext in IMAGE_EXTENSIONS:
+            max_image = 5 * 1024 * 1024  # 5MB
+            if file_size > max_image:
+                return jsonify({"error": "Image too large to preview"})
+            with ssh_state["sftp"].open(path, "rb") as f:
+                raw = f.read(max_image)
+            data = base64.b64encode(raw).decode("ascii")
+            mime = IMAGE_MIME.get(ext, "application/octet-stream")
+            return jsonify({"image": True, "data": data, "mime": mime, "size": file_size})
+
+        # Text preview
+        max_bytes = 64 * 1024  # 64KB
         with ssh_state["sftp"].open(path, "r") as f:
             raw = f.read(max_bytes)
 
