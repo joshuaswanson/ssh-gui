@@ -1,3 +1,4 @@
+import json
 import os
 import stat
 import time
@@ -487,6 +488,278 @@ def preview_file():
         return jsonify({"error": f"Not found: {path}"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
+
+# ── Tmux ───────────────────────────────────────────────────────────
+
+
+def run_ssh_command(cmd):
+    """Run a command on the remote server and return (stdout, stderr)."""
+    if not ssh_state["client"]:
+        return None, "Not connected"
+    try:
+        _, stdout, stderr = ssh_state["client"].exec_command(cmd)
+        return stdout.read().decode().strip(), stderr.read().decode().strip()
+    except Exception as e:
+        return None, str(e)
+
+
+@app.route("/api/tmux/status")
+def tmux_status():
+    if not ssh_state["client"]:
+        return jsonify({"active": False, "session": None})
+
+    out, _ = run_ssh_command("tmux display-message -p '#{session_name}' 2>/dev/null")
+    if out:
+        return jsonify({"active": True, "session": out})
+    return jsonify({"active": False, "session": None})
+
+
+@app.route("/api/tmux/windows")
+def tmux_windows():
+    if not ssh_state["client"]:
+        return jsonify({"windows": []})
+
+    out, _ = run_ssh_command(
+        "tmux list-windows -F '#{window_index}|#{window_name}|#{window_active}|#{window_panes}' 2>/dev/null"
+    )
+    if not out:
+        return jsonify({"windows": []})
+
+    windows = []
+    for line in out.split("\n"):
+        parts = line.split("|")
+        if len(parts) >= 4:
+            windows.append({
+                "index": int(parts[0]),
+                "name": parts[1],
+                "active": parts[2] == "1",
+                "pane_count": int(parts[3]),
+            })
+    return jsonify({"windows": windows})
+
+
+@app.route("/api/tmux/new-window", methods=["POST"])
+def tmux_new_window():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    _, err = run_ssh_command("tmux new-window 2>/dev/null")
+    if err and "no server" in err.lower():
+        return jsonify({"error": err}), 400
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/tmux/select-window", methods=["POST"])
+def tmux_select_window():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    index = data.get("index", 0)
+    _, err = run_ssh_command(f"tmux select-window -t :{index} 2>/dev/null")
+    if err and "no server" in err.lower():
+        return jsonify({"error": err}), 400
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/tmux/rename-window", methods=["POST"])
+def tmux_rename_window():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    index = data.get("index", 0)
+    name = shlex.quote(data.get("name", ""))
+    _, err = run_ssh_command(f"tmux rename-window -t :{index} {name} 2>/dev/null")
+    if err and "no server" in err.lower():
+        return jsonify({"error": err}), 400
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/tmux/kill-window", methods=["POST"])
+def tmux_kill_window():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    index = data.get("index", 0)
+    _, err = run_ssh_command(f"tmux kill-window -t :{index} 2>/dev/null")
+    if err and "no server" in err.lower():
+        return jsonify({"error": err}), 400
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/tmux/split-pane", methods=["POST"])
+def tmux_split_pane():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    direction = data.get("direction", "h")
+    flag = "-h" if direction == "h" else "-v"
+    _, err = run_ssh_command(f"tmux split-window {flag} 2>/dev/null")
+    if err and "no server" in err.lower():
+        return jsonify({"error": err}), 400
+    return jsonify({"status": "ok"})
+
+
+# ── Package Manager ────────────────────────────────────────────────
+
+
+@app.route("/api/packages/detect")
+def packages_detect():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    has_uv, _ = run_ssh_command("which uv 2>/dev/null")
+    has_pip, _ = run_ssh_command("which pip 2>/dev/null || which pip3 2>/dev/null")
+    python_ver, _ = run_ssh_command(
+        "python3 --version 2>/dev/null || python --version 2>/dev/null"
+    )
+    active_venv, _ = run_ssh_command("echo $VIRTUAL_ENV")
+
+    # Find nearby venvs in home dir
+    nearby_venvs = []
+    home = ssh_state.get("home_dir", "")
+    if home:
+        out, _ = run_ssh_command(
+            f"ls -d {shlex.quote(home)}/.venv {shlex.quote(home)}/venv "
+            f"{shlex.quote(home)}/*/venv {shlex.quote(home)}/*/.venv 2>/dev/null"
+        )
+        if out:
+            nearby_venvs = [p for p in out.split("\n") if p.strip()]
+
+    return jsonify({
+        "has_uv": bool(has_uv),
+        "has_pip": bool(has_pip),
+        "python_version": python_ver or None,
+        "active_venv": active_venv if active_venv else None,
+        "nearby_venvs": nearby_venvs,
+    })
+
+
+@app.route("/api/packages/list", methods=["POST"])
+def packages_list():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    venv_path = data.get("venv_path")
+
+    # Build the pip command, preferring uv
+    has_uv, _ = run_ssh_command("which uv 2>/dev/null")
+
+    if venv_path:
+        venv_quoted = shlex.quote(venv_path)
+        if has_uv:
+            cmd = f"VIRTUAL_ENV={venv_quoted} uv pip list --format=json 2>/dev/null"
+        else:
+            cmd = f"{venv_quoted}/bin/pip list --format=json 2>/dev/null"
+    else:
+        if has_uv:
+            cmd = "uv pip list --format=json 2>/dev/null"
+        else:
+            cmd = "pip list --format=json 2>/dev/null || pip3 list --format=json 2>/dev/null"
+
+    out, err = run_ssh_command(cmd)
+    if out:
+        try:
+            packages = json.loads(out)
+            return jsonify({"packages": packages})
+        except json.JSONDecodeError:
+            return jsonify({"packages": [], "error": "Failed to parse package list"})
+    return jsonify({"packages": [], "error": err or "No output"})
+
+
+@app.route("/api/packages/install", methods=["POST"])
+def packages_install():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    package = data.get("package", "").strip()
+    venv_path = data.get("venv_path")
+
+    if not package:
+        return jsonify({"error": "Package name is required"}), 400
+
+    # Sanitize package name
+    pkg_quoted = shlex.quote(package)
+    has_uv, _ = run_ssh_command("which uv 2>/dev/null")
+
+    if venv_path:
+        venv_quoted = shlex.quote(venv_path)
+        if has_uv:
+            cmd = f"VIRTUAL_ENV={venv_quoted} uv pip install {pkg_quoted} 2>&1"
+        else:
+            cmd = f"{venv_quoted}/bin/pip install {pkg_quoted} 2>&1"
+    else:
+        if has_uv:
+            cmd = f"uv pip install {pkg_quoted} 2>&1"
+        else:
+            cmd = f"pip install {pkg_quoted} 2>&1 || pip3 install {pkg_quoted} 2>&1"
+
+    out, _ = run_ssh_command(cmd)
+    if out and ("error" in out.lower() or "not found" in out.lower()):
+        return jsonify({"error": out}), 400
+    return jsonify({"status": "ok", "output": out})
+
+
+@app.route("/api/packages/uninstall", methods=["POST"])
+def packages_uninstall():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    package = data.get("package", "").strip()
+    venv_path = data.get("venv_path")
+
+    if not package:
+        return jsonify({"error": "Package name is required"}), 400
+
+    pkg_quoted = shlex.quote(package)
+    has_uv, _ = run_ssh_command("which uv 2>/dev/null")
+
+    if venv_path:
+        venv_quoted = shlex.quote(venv_path)
+        if has_uv:
+            cmd = f"VIRTUAL_ENV={venv_quoted} uv pip uninstall {pkg_quoted} 2>&1"
+        else:
+            cmd = f"{venv_quoted}/bin/pip uninstall -y {pkg_quoted} 2>&1"
+    else:
+        if has_uv:
+            cmd = f"uv pip uninstall {pkg_quoted} 2>&1"
+        else:
+            cmd = f"pip uninstall -y {pkg_quoted} 2>&1 || pip3 uninstall -y {pkg_quoted} 2>&1"
+
+    out, _ = run_ssh_command(cmd)
+    return jsonify({"status": "ok", "output": out})
+
+
+@app.route("/api/packages/create-venv", methods=["POST"])
+def packages_create_venv():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    path = data.get("path", "").strip()
+
+    if not path:
+        return jsonify({"error": "Path is required"}), 400
+
+    path_quoted = shlex.quote(path)
+    has_uv, _ = run_ssh_command("which uv 2>/dev/null")
+
+    if has_uv:
+        cmd = f"uv venv {path_quoted} 2>&1"
+    else:
+        cmd = f"python3 -m venv {path_quoted} 2>&1 || python -m venv {path_quoted} 2>&1"
+
+    out, _ = run_ssh_command(cmd)
+    if out and "error" in out.lower():
+        return jsonify({"error": out}), 400
+    return jsonify({"status": "ok", "output": out})
 
 
 # ── Terminal WebSocket ──────────────────────────────────────────────
