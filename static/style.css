@@ -381,7 +381,7 @@ body {
 }
 
 .column:last-child {
-  border-right: none;
+  border-right: 1px solid var(--border);
 }
 
 .column-resize-handle {
@@ -598,6 +598,10 @@ body {
   color: var(--text-muted);
 }
 
+.sort-dir-btn {
+  transition: transform 0.2s ease;
+}
+
 #sort-select {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
@@ -619,40 +623,50 @@ body {
   color: var(--text-primary);
 }
 
-/* File info actions */
+/* Copy icon */
 
-.file-info-actions {
-  display: flex;
-  gap: 6px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 4px;
-}
-
-.btn-copy {
-  flex: 1;
-  padding: 5px 8px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-family: var(--font-sans);
+.copy-icon {
+  display: inline-flex;
+  align-items: center;
   cursor: pointer;
-  transition: all 0.15s ease;
+  color: var(--text-muted);
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
+  vertical-align: middle;
+  margin-left: 4px;
 }
 
-.btn-copy:hover {
-  background: var(--bg-hover);
+.file-info-name:hover .copy-icon,
+.file-info-row:hover .copy-icon {
+  opacity: 1;
+}
+
+.copy-icon:hover {
+  color: var(--accent);
+}
+
+/* Rename input */
+
+.rename-input {
+  flex: 1;
+  padding: 2px 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
   color: var(--text-primary);
-  border-color: var(--border-light);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  outline: none;
+  min-width: 0;
 }
 
 /* File preview panel */
 
 .file-preview-panel {
-  min-width: 400px;
-  width: 400px;
+  min-width: 300px;
+  flex-grow: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
