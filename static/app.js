@@ -57,31 +57,30 @@ async function loadSSHConfigs() {
     const response = await fetch("/api/ssh-configs");
     const data = await response.json();
 
+    const starredContainer = document.getElementById("starred-hosts");
     const container = document.getElementById("saved-hosts");
     const defaultUser = data.default_user;
 
     document.getElementById("user-input").value = defaultUser;
 
     if (data.hosts.length === 0) {
+      starredContainer.innerHTML = "";
       container.innerHTML =
         '<p class="column-empty">No saved SSH hosts found in ~/.ssh/config</p>';
       return;
     }
 
     const starred = getStarredHosts();
-    const sorted = [...data.hosts].sort((a, b) => {
-      const aStarred = starred.has(a.name);
-      const bStarred = starred.has(b.name);
-      if (aStarred !== bStarred) return aStarred ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+    const starredList = data.hosts
+      .filter((h) => starred.has(h.name))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const unstarredList = data.hosts
+      .filter((h) => !starred.has(h.name))
+      .sort((a, b) => a.name.localeCompare(b.name));
 
-    container.innerHTML = "";
-    sorted.forEach((host) => {
+    function renderHostCard(host, isStarred) {
       const card = document.createElement("div");
       card.className = "host-card";
-
-      const isStarred = starred.has(host.name);
       card.innerHTML = `
                 <div class="host-card-content">
                     <div class="host-alias">${escapeHtml(host.name)}</div>
@@ -89,7 +88,6 @@ async function loadSSHConfigs() {
                 </div>
                 <button class="host-star${isStarred ? " starred" : ""}" title="${isStarred ? "Unstar" : "Star"}">&#9733;</button>
             `;
-
       card
         .querySelector(".host-card-content")
         .addEventListener("click", () => connectToHost(host));
@@ -98,9 +96,27 @@ async function loadSSHConfigs() {
         toggleStarHost(host.name);
         loadSSHConfigs();
       });
+      return card;
+    }
 
-      container.appendChild(card);
-    });
+    starredContainer.innerHTML = "";
+    if (starredList.length > 0) {
+      const label = document.createElement("div");
+      label.className = "panel-title";
+      label.textContent = "Starred";
+      starredContainer.appendChild(label);
+      const list = document.createElement("div");
+      list.className = "starred-hosts-list";
+      starredList.forEach((host) =>
+        list.appendChild(renderHostCard(host, true)),
+      );
+      starredContainer.appendChild(list);
+    }
+
+    container.innerHTML = "";
+    unstarredList.forEach((host) =>
+      container.appendChild(renderHostCard(host, false)),
+    );
   } catch (e) {
     console.error("Failed to load SSH configs:", e);
   }
