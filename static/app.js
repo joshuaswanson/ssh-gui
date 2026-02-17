@@ -1118,6 +1118,14 @@ function renderColumns() {
       }
     });
 
+    // Right-click on blank space for column context menu
+    colEl.addEventListener("contextmenu", (e) => {
+      if (e.target === colEl && column.path) {
+        e.preventDefault();
+        showColumnContextMenu(e.clientX, e.clientY, column.path);
+      }
+    });
+
     // Column-level drop target: drop into this column's directory
     if (column.path) {
       colEl.addEventListener("dragover", (e) => {
@@ -1374,7 +1382,7 @@ async function fetchGitBranch(dirPath) {
     const resp = await fetch("/api/git-info", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: dirPath + "/." }),
+      body: JSON.stringify({ path: dirPath }),
     });
     const data = await resp.json();
     state.gitBranch = data.branch || null;
@@ -1894,6 +1902,64 @@ async function handleChmod(path, who, perm, value) {
 }
 
 // ── Context Menu ─────────────────────────────────────────────────────
+
+function showColumnContextMenu(x, y, dirPath) {
+  hideContextMenu();
+
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.id = "context-menu";
+
+  const newFolderItem = document.createElement("div");
+  newFolderItem.className = "context-menu-item";
+  newFolderItem.textContent = "New Folder";
+  newFolderItem.addEventListener("click", () => {
+    hideContextMenu();
+    createNewFolder(dirPath);
+  });
+  menu.appendChild(newFolderItem);
+
+  document.body.appendChild(menu);
+
+  const rect = menu.getBoundingClientRect();
+  if (x + rect.width > window.innerWidth)
+    x = window.innerWidth - rect.width - 8;
+  if (y + rect.height > window.innerHeight)
+    y = window.innerHeight - rect.height - 8;
+  menu.style.left = x + "px";
+  menu.style.top = y + "px";
+
+  setTimeout(() => {
+    document.addEventListener("click", hideContextMenu, { once: true });
+    document.addEventListener("contextmenu", hideContextMenu, { once: true });
+  }, 0);
+  document.addEventListener("keydown", handleContextMenuKey);
+}
+
+async function createNewFolder(dirPath) {
+  const name = prompt("New folder name:");
+  if (!name) return;
+
+  const fullPath = dirPath === "/" ? "/" + name : dirPath + "/" + name;
+
+  try {
+    const resp = await fetch("/api/mkdir", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: fullPath }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showNotification(data.error, "error");
+    } else {
+      showNotification("Created " + name, "success");
+    }
+  } catch (e) {
+    showNotification("Failed: " + e.message, "error");
+  }
+
+  await refreshColumns();
+}
 
 function showContextMenu(x, y, colIndex, entry, fullPath) {
   hideContextMenu();

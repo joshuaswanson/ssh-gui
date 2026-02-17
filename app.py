@@ -426,6 +426,24 @@ def move_entry():
         return jsonify({"error": str(e)}), 400
 
 
+@app.route("/api/mkdir", methods=["POST"])
+def mkdir_entry():
+    if not ssh_state["sftp"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    path = request.json.get("path", "")
+    if not path:
+        return jsonify({"error": "path is required"}), 400
+
+    try:
+        ssh_state["sftp"].mkdir(path)
+        return jsonify({"status": "ok"})
+    except PermissionError:
+        return jsonify({"error": "Permission denied"}), 403
+    except IOError as e:
+        return jsonify({"error": str(e)}), 400
+
+
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg"}
 IMAGE_MIME = {
     ".png": "image/png",
@@ -510,23 +528,35 @@ def git_info():
     if not path:
         return jsonify({"error": "path is required"}), 400
 
-    basename = shlex.quote(posixpath.basename(path))
-    dir_part = shlex.quote(posixpath.dirname(path))
+    quoted = shlex.quote(path)
 
     result = {}
 
-    # Get the author of the commit that first added this file
-    cmd = (
-        f"cd {dir_part} && "
-        f"git log --diff-filter=A --follow --format='%an' -- {basename} 2>/dev/null | tail -1"
+    # Determine the directory to cd into for git commands
+    # If path is a directory, use it directly; otherwise use its parent
+    dir_cmd = (
+        f"if [ -d {quoted} ]; then echo {quoted}; "
+        f"else echo $(dirname {quoted}); fi"
     )
-    _, stdout, _ = ssh_state["client"].exec_command(cmd)
-    author = stdout.read().decode().strip()
-    if author:
-        result["created_by"] = author
+    _, stdout, _ = ssh_state["client"].exec_command(dir_cmd)
+    git_dir = stdout.read().decode().strip()
+    git_dir_q = shlex.quote(git_dir)
+
+    # Get the author of the commit that first added this file (skip for directories)
+    basename = posixpath.basename(path)
+    if basename and basename != ".":
+        bn_q = shlex.quote(basename)
+        cmd = (
+            f"cd {git_dir_q} && "
+            f"git log --diff-filter=A --follow --format='%an' -- {bn_q} 2>/dev/null | tail -1"
+        )
+        _, stdout, _ = ssh_state["client"].exec_command(cmd)
+        author = stdout.read().decode().strip()
+        if author:
+            result["created_by"] = author
 
     # Get the current git branch
-    cmd = f"cd {dir_part} && git rev-parse --abbrev-ref HEAD 2>/dev/null"
+    cmd = f"cd {git_dir_q} && git rev-parse --abbrev-ref HEAD 2>/dev/null"
     _, stdout, _ = ssh_state["client"].exec_command(cmd)
     branch = stdout.read().decode().strip()
     if branch:
