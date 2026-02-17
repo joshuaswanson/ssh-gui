@@ -1,0 +1,13 @@
+[project]
+name = "ssh-gui"
+version = "0.1.0"
+description = "SSH GUI with Finder-like column browser and integrated terminal"
+requires-python = ">=3.10"
+dependencies = [
+    "flask>=3.0",
+    "flask-socketio>=5.3",
+    "paramiko>=3.4",
+]
+
+[dependency-groups]
+dev = []
