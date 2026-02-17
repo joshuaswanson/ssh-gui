@@ -44,10 +44,97 @@ const COPY_ICON = `<svg width="12" height="12" viewBox="0 0 16 16" fill="current
 document.addEventListener("DOMContentLoaded", init);
 
 async function init() {
+  initTheme();
   await loadSSHConfigs();
   setupResizeHandle();
   setupKeyboardNavigation();
   window.addEventListener("resize", handleWindowResize);
+}
+
+// ── Theme ────────────────────────────────────────────────────────────
+
+const DARK_TERMINAL_THEME = {
+  background: "#0d1117",
+  foreground: "#e6edf3",
+  cursor: "#58a6ff",
+  selectionBackground: "rgba(56, 139, 253, 0.3)",
+  black: "#484f58",
+  red: "#ff7b72",
+  green: "#3fb950",
+  yellow: "#d29922",
+  blue: "#58a6ff",
+  magenta: "#bc8cff",
+  cyan: "#39d353",
+  white: "#b1bac4",
+  brightBlack: "#6e7681",
+  brightRed: "#ffa198",
+  brightGreen: "#56d364",
+  brightYellow: "#e3b341",
+  brightBlue: "#79c0ff",
+  brightMagenta: "#d2a8ff",
+  brightCyan: "#56d364",
+  brightWhite: "#f0f6fc",
+};
+
+const LIGHT_TERMINAL_THEME = {
+  background: "#f6f8fa",
+  foreground: "#1f2328",
+  cursor: "#0969da",
+  selectionBackground: "rgba(9, 105, 218, 0.2)",
+  black: "#24292f",
+  red: "#cf222e",
+  green: "#1a7f37",
+  yellow: "#9a6700",
+  blue: "#0969da",
+  magenta: "#8250df",
+  cyan: "#1b7c83",
+  white: "#6e7781",
+  brightBlack: "#57606a",
+  brightRed: "#a40e26",
+  brightGreen: "#116329",
+  brightYellow: "#7d4e00",
+  brightBlue: "#0550ae",
+  brightMagenta: "#6639ba",
+  brightCyan: "#136e75",
+  brightWhite: "#8c959f",
+};
+
+function initTheme() {
+  const saved = localStorage.getItem("theme") || "dark";
+  applyTheme(saved);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute("data-theme") || "dark";
+  const next = current === "dark" ? "light" : "dark";
+  applyTheme(next);
+  localStorage.setItem("theme", next);
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  updateThemeIcons(theme);
+
+  if (state.terminal) {
+    state.terminal.options.theme =
+      theme === "light" ? LIGHT_TERMINAL_THEME : DARK_TERMINAL_THEME;
+  }
+}
+
+function getCurrentTheme() {
+  return document.documentElement.getAttribute("data-theme") || "dark";
+}
+
+function updateThemeIcons(theme) {
+  // Sun icon for dark mode (click to go light), moon icon for light mode (click to go dark)
+  const sunPath =
+    "M8 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 1A5 5 0 1 1 8 3a5 5 0 0 1 0 10zm0-11.5a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-1 0V2a.5.5 0 0 1 .5-.5zm0 11a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-1 0v-1a.5.5 0 0 1 .5-.5zm5-5.5a.5.5 0 0 1 0 1h-1a.5.5 0 0 1 0-1h1zM3 8a.5.5 0 0 1 0 1H2a.5.5 0 0 1 0-1h1zm9.146-3.854a.5.5 0 0 1 0 .708l-.708.707a.5.5 0 1 1-.707-.707l.707-.708a.5.5 0 0 1 .708 0zM5.27 10.023a.5.5 0 0 1 0 .707l-.708.708a.5.5 0 0 1-.707-.708l.707-.707a.5.5 0 0 1 .708 0zm7.577.707a.5.5 0 0 1-.707 0l-.708-.707a.5.5 0 0 1 .707-.708l.708.708a.5.5 0 0 1 0 .707zM5.27 5.977a.5.5 0 0 1-.708 0l-.707-.708a.5.5 0 1 1 .707-.707l.708.707a.5.5 0 0 1 0 .708z";
+  const moonPath =
+    "M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z";
+
+  document.querySelectorAll("[onclick='toggleTheme()'] path").forEach((el) => {
+    el.setAttribute("d", theme === "dark" ? sunPath : moonPath);
+  });
 }
 
 // ── SSH Config ───────────────────────────────────────────────────────
@@ -1378,28 +1465,10 @@ function initTerminal() {
       fontSize: 13,
       lineHeight: 1.2,
       fontFamily: "'SF Mono', 'Cascadia Code', 'Fira Code', Menlo, monospace",
-      theme: {
-        background: "#0d1117",
-        foreground: "#e6edf3",
-        cursor: "#58a6ff",
-        selectionBackground: "rgba(56, 139, 253, 0.3)",
-        black: "#484f58",
-        red: "#ff7b72",
-        green: "#3fb950",
-        yellow: "#d29922",
-        blue: "#58a6ff",
-        magenta: "#bc8cff",
-        cyan: "#39d353",
-        white: "#b1bac4",
-        brightBlack: "#6e7681",
-        brightRed: "#ffa198",
-        brightGreen: "#56d364",
-        brightYellow: "#e3b341",
-        brightBlue: "#79c0ff",
-        brightMagenta: "#d2a8ff",
-        brightCyan: "#56d364",
-        brightWhite: "#f0f6fc",
-      },
+      theme:
+        getCurrentTheme() === "light"
+          ? LIGHT_TERMINAL_THEME
+          : DARK_TERMINAL_THEME,
     });
 
     if (FitAddonCtor) {
