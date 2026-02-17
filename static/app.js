@@ -68,20 +68,60 @@ async function loadSSHConfigs() {
       return;
     }
 
+    const starred = getStarredHosts();
+    const sorted = [...data.hosts].sort((a, b) => {
+      const aStarred = starred.has(a.name);
+      const bStarred = starred.has(b.name);
+      if (aStarred !== bStarred) return aStarred ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
     container.innerHTML = "";
-    data.hosts.forEach((host) => {
+    sorted.forEach((host) => {
       const card = document.createElement("div");
       card.className = "host-card";
+
+      const isStarred = starred.has(host.name);
       card.innerHTML = `
-                <div class="host-alias">${escapeHtml(host.name)}</div>
-                <div class="host-detail">${escapeHtml(host.user || defaultUser)}@${escapeHtml(host.hostname)}</div>
+                <div class="host-card-content">
+                    <div class="host-alias">${escapeHtml(host.name)}</div>
+                    <div class="host-detail">${escapeHtml(host.user || defaultUser)}@${escapeHtml(host.hostname)}</div>
+                </div>
+                <button class="host-star${isStarred ? " starred" : ""}" title="${isStarred ? "Unstar" : "Star"}">&#9733;</button>
             `;
-      card.addEventListener("click", () => connectToHost(host));
+
+      card
+        .querySelector(".host-card-content")
+        .addEventListener("click", () => connectToHost(host));
+      card.querySelector(".host-star").addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleStarHost(host.name);
+        loadSSHConfigs();
+      });
+
       container.appendChild(card);
     });
   } catch (e) {
     console.error("Failed to load SSH configs:", e);
   }
+}
+
+function getStarredHosts() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem("starredHosts") || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+function toggleStarHost(name) {
+  const starred = getStarredHosts();
+  if (starred.has(name)) {
+    starred.delete(name);
+  } else {
+    starred.add(name);
+  }
+  localStorage.setItem("starredHosts", JSON.stringify([...starred]));
 }
 
 // ── Connection ───────────────────────────────────────────────────────
@@ -229,6 +269,7 @@ async function navigateTo(path) {
     state.focusedColumn = 0;
     renderColumns();
     updateBreadcrumb();
+    fetchDirSizes(0);
   } catch (e) {
     showNotification("Failed to browse: " + e.message, "error");
   }
@@ -309,6 +350,7 @@ async function selectEntry(colIndex, entry, opts = {}) {
           lastClickedIndex: -1,
           selectionCursor: -1,
         });
+        fetchDirSizes(state.columns.length - 1);
       } else {
         const err = await response.json();
         state.columns = state.columns.slice(0, colIndex + 1);
@@ -356,7 +398,9 @@ async function selectEntry(colIndex, entry, opts = {}) {
       fileInfo,
     });
 
-    if (entry.size <= 1024 * 1024) {
+    const isImage = /\.(png|jpe?g|gif|webp|bmp|ico|svg)$/i.test(entry.name);
+    const maxPreviewSize = isImage ? 5 * 1024 * 1024 : 1024 * 1024;
+    if (entry.size <= maxPreviewSize) {
       state.columns.push({
         path: null,
         entries: [],
@@ -399,6 +443,10 @@ async function fetchPreview(filePath) {
 
     if (data.error) {
       previewCol.filePreview.error = data.error;
+    } else if (data.image) {
+      previewCol.filePreview.image = true;
+      previewCol.filePreview.imageData = data.data;
+      previewCol.filePreview.imageMime = data.mime;
     } else if (data.binary) {
       previewCol.filePreview.binary = true;
     } else {
@@ -517,6 +565,8 @@ function renderColumns() {
         bodyHtml = '<div class="file-preview-message">Loading...</div>';
       } else if (preview.error) {
         bodyHtml = `<div class="file-preview-message">${escapeHtml(preview.error)}</div>`;
+      } else if (preview.image) {
+        bodyHtml = `<div class="file-preview-image"><img src="data:${preview.imageMime};base64,${preview.imageData}" /></div>`;
       } else if (preview.binary) {
         bodyHtml =
           '<div class="file-preview-message">Binary file -- cannot preview</div>';
@@ -690,8 +740,9 @@ function renderColumns() {
 
       let rightContent;
       if (entry.is_dir) {
-        rightContent =
-          '<span class="entry-size">--</span><span class="entry-chevron">&#x203A;</span>';
+        const dirSizeStr =
+          entry.dirSize !== undefined ? formatSize(entry.dirSize) : "--";
+        rightContent = `<span class="entry-size">${dirSizeStr}</span><span class="entry-chevron">&#x203A;</span>`;
       } else {
         rightContent = `<span class="entry-size">${formatSize(entry.size)}</span>`;
       }
@@ -939,6 +990,15 @@ async function refreshColumns() {
   }
   renderColumns();
   updateBreadcrumb();
+
+  // Re-fetch directory sizes
+  for (let i = 0; i < state.columns.length; i++) {
+    const col = state.columns[i];
+    if (col.path && !col.fileInfo && !col.filePreview) {
+      col.sizesLoaded = false;
+      fetchDirSizes(i);
+    }
+  }
 }
 
 function updateBreadcrumb() {
@@ -1099,6 +1159,25 @@ function handleKeyNavigation(e) {
         } else {
           renderColumns();
           focusColumns();
+        }
+      } else if (column.selected.size === 1) {
+        // Re-open the selected entry
+        const selectedName = [...column.selected][0];
+        const selectedEntry = entries.find((en) => en.name === selectedName);
+        if (selectedEntry) {
+          selectEntry(fc, selectedEntry).then(() => {
+            if (state.columns.length > fc + 1) {
+              state.focusedColumn = fc + 1;
+              const newCol = state.columns[fc + 1];
+              const newEntries = getVisibleEntries(newCol);
+              if (newEntries.length > 0 && newCol.selected.size === 0) {
+                selectEntry(fc + 1, newEntries[0]).then(() => focusColumns());
+              } else {
+                renderColumns();
+                focusColumns();
+              }
+            }
+          });
         }
       }
       break;
@@ -1276,6 +1355,51 @@ function cdToBrowserPath() {
       data: "cd " + escaped + "\n",
     });
     state.terminal.focus();
+  }
+}
+
+// ── Directory Sizes ─────────────────────────────────────────────────
+
+async function fetchDirSizes(colIndex) {
+  const column = state.columns[colIndex];
+  if (
+    !column ||
+    !column.path ||
+    column.fileInfo ||
+    column.filePreview ||
+    column.sizesLoaded
+  )
+    return;
+
+  const dirNames = column.entries.filter((e) => e.is_dir).map((e) => e.name);
+  if (dirNames.length === 0) return;
+
+  column.sizesLoaded = true;
+
+  try {
+    const resp = await fetch("/api/dir-sizes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: column.path, names: dirNames }),
+    });
+    const data = await resp.json();
+    if (data.sizes) {
+      // Verify column still exists
+      if (
+        colIndex >= state.columns.length ||
+        state.columns[colIndex] !== column
+      )
+        return;
+
+      for (const entry of column.entries) {
+        if (entry.is_dir && data.sizes[entry.name] !== undefined) {
+          entry.dirSize = data.sizes[entry.name];
+        }
+      }
+      renderColumns();
+    }
+  } catch {
+    // silently fail
   }
 }
 

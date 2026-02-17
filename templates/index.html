@@ -19,52 +19,62 @@
       <div class="connect-container">
         <div class="connect-header">
           <h1>SSH</h1>
-          <p class="subtitle">Select a host or enter connection details</p>
         </div>
-        <div id="saved-hosts" class="saved-hosts"></div>
-        <div class="divider"><span>or connect manually</span></div>
-        <form
-          id="connect-form"
-          class="connect-form"
-          onsubmit="handleManualConnect(event)"
-        >
-          <div class="form-row">
-            <div class="form-group flex-2">
-              <label for="host-input">Host</label>
-              <input
-                type="text"
-                id="host-input"
-                placeholder="hostname or IP"
-                required
-              />
-            </div>
-            <div class="form-group flex-1">
-              <label for="port-input">Port</label>
-              <input type="number" id="port-input" value="22" />
-            </div>
+        <div class="connect-body">
+          <div class="connect-panel connect-hosts-panel">
+            <div class="panel-title">Saved Hosts</div>
+            <div id="saved-hosts" class="saved-hosts"></div>
           </div>
-          <div class="form-row">
-            <div class="form-group flex-1">
-              <label for="user-input">Username</label>
-              <input type="text" id="user-input" placeholder="username" />
-            </div>
-            <div class="form-group flex-1">
-              <label for="pass-input">Password</label>
-              <input type="password" id="pass-input" placeholder="optional" />
-            </div>
+          <div class="connect-panel connect-manual-panel">
+            <div class="panel-title">Manual Connection</div>
+            <form
+              id="connect-form"
+              class="connect-form"
+              onsubmit="handleManualConnect(event)"
+            >
+              <div class="form-row">
+                <div class="form-group flex-2">
+                  <label for="host-input">Host</label>
+                  <input
+                    type="text"
+                    id="host-input"
+                    placeholder="hostname or IP"
+                    required
+                  />
+                </div>
+                <div class="form-group flex-1">
+                  <label for="port-input">Port</label>
+                  <input type="number" id="port-input" value="22" />
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group flex-1">
+                  <label for="user-input">Username</label>
+                  <input type="text" id="user-input" placeholder="username" />
+                </div>
+                <div class="form-group flex-1">
+                  <label for="pass-input">Password</label>
+                  <input
+                    type="password"
+                    id="pass-input"
+                    placeholder="optional"
+                  />
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="key-input">Identity File</label>
+                <input
+                  type="text"
+                  id="key-input"
+                  placeholder="~/.ssh/id_rsa (optional)"
+                />
+              </div>
+              <button type="submit" class="btn btn-primary" id="connect-btn">
+                Connect
+              </button>
+            </form>
           </div>
-          <div class="form-group">
-            <label for="key-input">Identity File</label>
-            <input
-              type="text"
-              id="key-input"
-              placeholder="~/.ssh/id_rsa (optional)"
-            />
-          </div>
-          <button type="submit" class="btn btn-primary" id="connect-btn">
-            Connect
-          </button>
-        </form>
+        </div>
       </div>
     </div>
 
