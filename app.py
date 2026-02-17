@@ -312,20 +312,23 @@ def get_dir_sizes():
         return jsonify({"sizes": {}})
 
     try:
-        args = " ".join(
-            shlex.quote(posixpath.join(path, n)) for n in names
-        )
-        # Use timeout to avoid hanging on huge directory trees;
-        # du -sb is GNU coreutils, fall back to du -sk if unavailable
-        cmd = (
-            "timeout 10 du -sb " + args + " 2>/dev/null || "
-            "timeout 10 du -sk " + args + " 2>/dev/null; exit 0"
-        )
+        # Run du -sb on each directory individually so permission errors
+        # or slow dirs don't block the rest. Use -s (summarize) and a
+        # per-directory timeout so one slow tree doesn't kill everything.
+        script_parts = []
+        for n in names:
+            quoted = shlex.quote(posixpath.join(path, n))
+            # Try du -sb first (GNU), fall back to du -sk (BSD/macOS)
+            script_parts.append(
+                f"timeout 5 du -sb {quoted} 2>/dev/null || "
+                f"timeout 5 du -sk {quoted} 2>/dev/null || "
+                f"echo '0\t'{quoted}"
+            )
+        cmd = "; ".join(script_parts) + "; exit 0"
+
         _, stdout, _ = ssh_state["client"].exec_command(cmd)
         output = stdout.read().decode()
 
-        # Detect if output is in KB (from du -sk fallback)
-        is_kb = "du -sb" not in cmd  # always try parsing
         sizes = {}
         for line in output.strip().split("\n"):
             if "\t" in line:
@@ -333,8 +336,6 @@ def get_dir_sizes():
                 try:
                     name = posixpath.basename(dir_path.rstrip("/"))
                     val = int(size_str)
-                    # Heuristic: if all values are suspiciously round multiples
-                    # of 4, it's likely KB from du -sk
                     if name not in sizes:
                         sizes[name] = val
                 except ValueError:
@@ -464,6 +465,16 @@ def preview_file():
             mime = IMAGE_MIME.get(ext, "application/octet-stream")
             return jsonify({"image": True, "data": data, "mime": mime, "size": file_size})
 
+        # PDF preview
+        if ext == ".pdf":
+            max_pdf = 10 * 1024 * 1024  # 10MB
+            if file_size > max_pdf:
+                return jsonify({"error": "PDF too large to preview"})
+            with ssh_state["sftp"].open(path, "rb") as f:
+                raw = f.read(max_pdf)
+            data = base64.b64encode(raw).decode("ascii")
+            return jsonify({"pdf": True, "data": data, "size": file_size})
+
         # Text preview
         max_bytes = 64 * 1024  # 64KB
         with ssh_state["sftp"].open(path, "r") as f:
@@ -488,6 +499,40 @@ def preview_file():
         return jsonify({"error": f"Not found: {path}"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/git-info", methods=["POST"])
+def git_info():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    path = request.json.get("path", "")
+    if not path:
+        return jsonify({"error": "path is required"}), 400
+
+    quoted = shlex.quote(path)
+    dir_part = shlex.quote(posixpath.dirname(path))
+
+    result = {}
+
+    # Get the author of the commit that first added this file
+    cmd = (
+        f"cd {dir_part} && "
+        f"git log --diff-filter=A --follow --format='%an' -- {quoted} 2>/dev/null | tail -1"
+    )
+    _, stdout, _ = ssh_state["client"].exec_command(cmd)
+    author = stdout.read().decode().strip()
+    if author:
+        result["created_by"] = author
+
+    # Get the current git branch
+    cmd = f"cd {dir_part} && git rev-parse --abbrev-ref HEAD 2>/dev/null"
+    _, stdout, _ = ssh_state["client"].exec_command(cmd)
+    branch = stdout.read().decode().strip()
+    if branch:
+        result["branch"] = branch
+
+    return jsonify(result)
 
 
 # ── Tmux ───────────────────────────────────────────────────────────

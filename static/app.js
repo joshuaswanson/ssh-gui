@@ -23,6 +23,7 @@ const state = {
     windows: [],
     pollInterval: null,
   },
+  gitBranch: null,
   packagePanel: {
     open: false,
     packages: [],
@@ -235,9 +236,14 @@ function toggleStarHost(name) {
   if (starred.has(name)) {
     starred.delete(name);
   } else {
+    if (starred.size >= 4) {
+      showNotification("Maximum 4 starred hosts", "error");
+      return false;
+    }
     starred.add(name);
   }
   localStorage.setItem("starredHosts", JSON.stringify([...starred]));
+  return true;
 }
 
 async function animateStarToggle(card, hostName) {
@@ -245,6 +251,13 @@ async function animateStarToggle(card, hostName) {
   const savedEl = document.getElementById("saved-hosts");
   const oldStarredH = starredEl.offsetHeight;
   const oldSavedH = savedEl.offsetHeight;
+
+  // Check limit before animating
+  const isStarred = getStarredHosts().has(hostName);
+  if (!isStarred && getStarredHosts().size >= 4) {
+    showNotification("Maximum 4 starred hosts", "error");
+    return;
+  }
 
   // Fade out the card
   card.style.transition = "opacity 0.15s ease, transform 0.15s ease";
@@ -624,7 +637,12 @@ async function selectEntry(colIndex, entry, opts = {}) {
     });
 
     const isImage = /\.(png|jpe?g|gif|webp|bmp|ico|svg)$/i.test(entry.name);
-    const maxPreviewSize = isImage ? 5 * 1024 * 1024 : 1024 * 1024;
+    const isPdf = /\.pdf$/i.test(entry.name);
+    const maxPreviewSize = isImage
+      ? 5 * 1024 * 1024
+      : isPdf
+        ? 10 * 1024 * 1024
+        : 1024 * 1024;
     if (entry.size <= maxPreviewSize) {
       state.columns.push({
         path: null,
@@ -668,6 +686,9 @@ async function fetchPreview(filePath) {
 
     if (data.error) {
       previewCol.filePreview.error = data.error;
+    } else if (data.pdf) {
+      previewCol.filePreview.pdf = true;
+      previewCol.filePreview.pdfData = data.data;
     } else if (data.image) {
       previewCol.filePreview.image = true;
       previewCol.filePreview.imageData = data.data;
@@ -790,6 +811,8 @@ function renderColumns() {
         bodyHtml = '<div class="file-preview-message">Loading...</div>';
       } else if (preview.error) {
         bodyHtml = `<div class="file-preview-message">${escapeHtml(preview.error)}</div>`;
+      } else if (preview.pdf) {
+        bodyHtml = `<div class="file-preview-pdf"><iframe src="data:application/pdf;base64,${preview.pdfData}" style="width:100%;height:100%;border:none;"></iframe></div>`;
       } else if (preview.image) {
         bodyHtml = `<div class="file-preview-image"><img src="data:${preview.imageMime};base64,${preview.imageData}" /></div>`;
       } else if (preview.binary) {
@@ -863,9 +886,9 @@ function renderColumns() {
                             <span class="label">Modified</span>
                             <span class="value">${formatDate(info.mtime)}</span>
                         </div>
-                        <div class="file-info-row">
-                            <span class="label">Path</span>
-                            <span class="value value-path">${escapeHtml(info.path)} <span class="copy-icon" onclick="copyToClipboard('${escapeAttr(info.path)}')" title="Copy path">${COPY_ICON}</span></span>
+                        <div class="file-info-row" id="git-author-row-${colIndex}" style="display:none">
+                            <span class="label">Created by</span>
+                            <span class="value" id="git-author-val-${colIndex}"></span>
                         </div>
                     </div>
                     <div class="file-info-section">
@@ -885,6 +908,12 @@ function renderColumns() {
       }
 
       container.appendChild(colEl);
+
+      // Fetch git author asynchronously
+      if (!info._gitFetched) {
+        info._gitFetched = true;
+        fetchGitInfo(info.path, colIndex);
+      }
 
       // Resize handle after each column except the last
       if (colIndex < state.columns.length - 1) {
@@ -1029,7 +1058,7 @@ function renderColumns() {
           colPath === "/" ? "/" + n : colPath + "/" + n,
         );
         state.dragSources = paths;
-        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.effectAllowed = "copyMove";
         e.dataTransfer.setData("text/plain", JSON.stringify(paths));
         entryEl.classList.add("dragging");
       });
@@ -1271,6 +1300,71 @@ function updateBreadcrumb() {
     partEl.addEventListener("click", () => navigateToBreadcrumb(partPath));
     breadcrumb.appendChild(partEl);
   });
+
+  updatePathBar();
+}
+
+function updatePathBar() {
+  const pathBar = document.getElementById("path-bar");
+  if (!pathBar) return;
+
+  // Find the deepest selected file/folder path
+  let displayPath = null;
+  for (let i = state.columns.length - 1; i >= 0; i--) {
+    const col = state.columns[i];
+    if (col.fileInfo) {
+      displayPath = col.fileInfo.path;
+      break;
+    }
+    if (col.path && col.selected && col.selected.size === 1) {
+      const name = [...col.selected][0];
+      displayPath = col.path === "/" ? "/" + name : col.path + "/" + name;
+      break;
+    }
+    if (col.path) {
+      displayPath = col.path;
+      break;
+    }
+  }
+
+  if (!displayPath) {
+    pathBar.innerHTML = "";
+    return;
+  }
+
+  const branchHtml = state.gitBranch
+    ? `<span class="path-bar-branch">${escapeHtml(state.gitBranch)}</span>`
+    : "";
+  pathBar.innerHTML = `<span class="path-bar-text"><bdi>${escapeHtml(displayPath)}</bdi></span>${branchHtml}<button class="path-bar-copy" onclick="copyToClipboard('${escapeAttr(displayPath)}')" title="Copy path">${COPY_ICON}</button>`;
+}
+
+async function fetchGitInfo(filePath, colIndex) {
+  try {
+    const resp = await fetch("/api/git-info", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: filePath }),
+    });
+    const data = await resp.json();
+
+    // Update author in the file info panel
+    if (data.created_by) {
+      const row = document.getElementById("git-author-row-" + colIndex);
+      const val = document.getElementById("git-author-val-" + colIndex);
+      if (row && val) {
+        val.textContent = data.created_by;
+        row.style.display = "";
+      }
+    }
+
+    // Update branch in path bar
+    if (data.branch) {
+      state.gitBranch = data.branch;
+      updatePathBar();
+    }
+  } catch {
+    // silently fail -- not in a git repo
+  }
 }
 
 function toggleHiddenFiles() {
@@ -1790,6 +1884,9 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
   menu.className = "context-menu";
   menu.id = "context-menu";
 
+  const shortcuts = getSidebarShortcuts(state.host);
+  const isFavorited = shortcuts.some((s) => s.path === fullPath);
+
   const items = [
     {
       label: "Copy Name",
@@ -1800,6 +1897,20 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
       action: () => copyToClipboard(fullPath),
     },
     { separator: true },
+    {
+      label: isFavorited ? "Remove from Favorites" : "Add to Favorites",
+      action: () => {
+        const current = getSidebarShortcuts(state.host);
+        if (isFavorited) {
+          const idx = current.findIndex((s) => s.path === fullPath);
+          if (idx >= 0) current.splice(idx, 1);
+        } else {
+          current.push({ path: fullPath, name: entry.name });
+        }
+        saveSidebarShortcuts(state.host, current);
+        renderSidebar();
+      },
+    },
     {
       label: "Rename",
       action: () => startRename(colIndex, entry.name),
@@ -2103,36 +2214,36 @@ function saveSidebarShortcuts(host, shortcuts) {
   localStorage.setItem("shortcuts:" + host, JSON.stringify(shortcuts));
 }
 
+function ensureHomeInShortcuts() {
+  const shortcuts = getSidebarShortcuts(state.host);
+  if (shortcuts.length === 0) {
+    const homeName = "~" + (state.homeDir.split("/").pop() || "");
+    shortcuts.push({ path: state.homeDir, name: homeName });
+    saveSidebarShortcuts(state.host, shortcuts);
+  }
+}
+
 function renderSidebar() {
   const sidebar = document.getElementById("sidebar");
   if (!sidebar || !state.connected) return;
 
+  ensureHomeInShortcuts();
   sidebar.innerHTML = "";
 
-  // Home link
   const section = document.createElement("div");
   section.className = "sidebar-section";
-
-  const homeItem = document.createElement("div");
-  homeItem.className = "sidebar-item";
-  homeItem.innerHTML = `<span class="sidebar-icon">${FOLDER_ICON}</span><span class="sidebar-name">Home</span>`;
-  homeItem.addEventListener("click", () => navigateTo(state.homeDir));
-  section.appendChild(homeItem);
-
-  const sep = document.createElement("div");
-  sep.className = "sidebar-separator";
-  section.appendChild(sep);
 
   const label = document.createElement("div");
   label.className = "sidebar-label";
   label.textContent = "Favorites";
   section.appendChild(label);
 
-  // User shortcuts
+  // Shortcuts (including home as a regular favorite)
   const shortcuts = getSidebarShortcuts(state.host);
   shortcuts.forEach((shortcut, idx) => {
     const item = document.createElement("div");
     item.className = "sidebar-item";
+    item.draggable = true;
     const name = shortcut.name || shortcut.path.split("/").pop() || "/";
     item.innerHTML = `<span class="sidebar-icon">${FOLDER_ICON}</span><span class="sidebar-name">${escapeHtml(name)}</span>`;
     item.title = shortcut.path;
@@ -2141,63 +2252,97 @@ function renderSidebar() {
       e.preventDefault();
       showSidebarContextMenu(e.clientX, e.clientY, idx);
     });
+
+    // Drag out to remove
+    item.addEventListener("dragstart", (e) => {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData(
+        "text/plain",
+        JSON.stringify({ sidebarRemove: idx }),
+      );
+      item.classList.add("dragging");
+    });
+    item.addEventListener("dragend", (e) => {
+      item.classList.remove("dragging");
+      // If dropped outside the sidebar, remove it
+      const rect = sidebar.getBoundingClientRect();
+      if (
+        e.clientX < rect.left ||
+        e.clientX > rect.right ||
+        e.clientY < rect.top ||
+        e.clientY > rect.bottom
+      ) {
+        const current = getSidebarShortcuts(state.host);
+        current.splice(idx, 1);
+        saveSidebarShortcuts(state.host, current);
+        renderSidebar();
+      }
+    });
+
     section.appendChild(item);
   });
 
   sidebar.appendChild(section);
 
-  // Drag-and-drop onto sidebar
-  sidebar.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "link";
-    sidebar.classList.add("drag-over");
-  });
+  // Set up drag-and-drop listeners once (avoid stacking on re-renders)
+  if (!sidebar._sidebarDragSetup) {
+    sidebar._sidebarDragSetup = true;
 
-  sidebar.addEventListener("dragleave", (e) => {
-    if (!sidebar.contains(e.relatedTarget)) {
-      sidebar.classList.remove("drag-over");
-    }
-  });
+    sidebar.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      sidebar.classList.add("drag-over");
+    });
 
-  sidebar.addEventListener("drop", (e) => {
-    e.preventDefault();
-    sidebar.classList.remove("drag-over");
-
-    let paths;
-    try {
-      paths = JSON.parse(e.dataTransfer.getData("text/plain"));
-    } catch {
-      return;
-    }
-    if (!Array.isArray(paths)) return;
-
-    const shortcuts = getSidebarShortcuts(state.host);
-    let added = 0;
-    for (const p of paths) {
-      // Only add directories (check if path is in a directory column)
-      const isDir = state.columns.some(
-        (col) =>
-          col.path &&
-          col.entries &&
-          col.entries.some(
-            (ent) =>
-              ent.is_dir &&
-              (col.path === "/"
-                ? "/" + ent.name
-                : col.path + "/" + ent.name) === p,
-          ),
-      );
-      if (isDir && !shortcuts.some((s) => s.path === p)) {
-        shortcuts.push({ path: p, name: p.split("/").pop() || "/" });
-        added++;
+    sidebar.addEventListener("dragleave", (e) => {
+      if (!sidebar.contains(e.relatedTarget)) {
+        sidebar.classList.remove("drag-over");
       }
-    }
-    if (added > 0) {
-      saveSidebarShortcuts(state.host, shortcuts);
-      renderSidebar();
-      showNotification(`Added ${added} shortcut(s)`, "success");
-    }
-  });
+    });
+
+    sidebar.addEventListener("drop", (e) => {
+      e.preventDefault();
+      sidebar.classList.remove("drag-over");
+
+      let paths;
+      try {
+        const raw = JSON.parse(e.dataTransfer.getData("text/plain"));
+        // Ignore sidebar-item drags (those are handled by dragend)
+        if (raw && raw.sidebarRemove !== undefined) return;
+        paths = raw;
+      } catch {
+        return;
+      }
+      if (!Array.isArray(paths)) return;
+
+      const shortcuts = getSidebarShortcuts(state.host);
+      let added = 0;
+      for (const p of paths) {
+        // Only add directories (check if path is in a directory column)
+        const isDir = state.columns.some(
+          (col) =>
+            col.path &&
+            col.entries &&
+            col.entries.some(
+              (ent) =>
+                ent.is_dir &&
+                (col.path === "/"
+                  ? "/" + ent.name
+                  : col.path + "/" + ent.name) === p,
+            ),
+        );
+        if (isDir && !shortcuts.some((s) => s.path === p)) {
+          shortcuts.push({ path: p, name: p.split("/").pop() || "/" });
+          added++;
+        }
+      }
+      if (added > 0) {
+        saveSidebarShortcuts(state.host, shortcuts);
+        renderSidebar();
+        showNotification(`Added ${added} shortcut(s)`, "success");
+      }
+    });
+  }
 }
 
 function showSidebarContextMenu(x, y, shortcutIndex) {
