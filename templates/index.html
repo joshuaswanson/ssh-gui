@@ -33,6 +33,14 @@
               class="connect-form"
               onsubmit="handleManualConnect(event)"
             >
+              <div class="form-group">
+                <label for="alias-input">Name</label>
+                <input
+                  type="text"
+                  id="alias-input"
+                  placeholder="my-server (optional, for saving)"
+                />
+              </div>
               <div class="form-row">
                 <div class="form-group flex-2">
                   <label for="host-input">Host</label>
@@ -70,9 +78,18 @@
                   placeholder="~/.ssh/id_rsa (optional)"
                 />
               </div>
-              <button type="submit" class="btn btn-primary" id="connect-btn">
-                Connect
-              </button>
+              <div class="form-row form-actions">
+                <button type="submit" class="btn btn-primary" id="connect-btn">
+                  Connect
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-secondary"
+                  onclick="handleSaveAndConnect()"
+                >
+                  Save &amp; Connect
+                </button>
+              </div>
             </form>
           </div>
         </div>

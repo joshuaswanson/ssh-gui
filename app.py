@@ -84,6 +84,44 @@ def get_ssh_configs():
     )
 
 
+@app.route("/api/save-host", methods=["POST"])
+def save_host():
+    data = request.json
+    alias = data.get("alias", "").strip()
+    hostname = data.get("hostname", "").strip()
+    username = data.get("username", "").strip()
+    port = int(data.get("port", 22))
+    key_file = data.get("key_file", "").strip()
+
+    if not alias or not hostname:
+        return jsonify({"error": "Name and hostname are required"}), 400
+
+    config_path = Path.home() / ".ssh" / "config"
+    config_path.parent.mkdir(mode=0o700, exist_ok=True)
+
+    # Check if alias already exists
+    if config_path.exists():
+        config = paramiko.SSHConfig()
+        with open(config_path) as f:
+            config.parse(f)
+        if alias in config.get_hostnames():
+            return jsonify({"error": f"Host '{alias}' already exists"}), 400
+
+    # Append new host entry
+    lines = ["\n", f"Host {alias}\n", f"    HostName {hostname}\n"]
+    if username:
+        lines.append(f"    User {username}\n")
+    if port != 22:
+        lines.append(f"    Port {port}\n")
+    if key_file:
+        lines.append(f"    IdentityFile {key_file}\n")
+
+    with open(config_path, "a") as f:
+        f.writelines(lines)
+
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/connect", methods=["POST"])
 def connect():
     data = request.json

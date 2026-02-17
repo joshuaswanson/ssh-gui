@@ -94,7 +94,11 @@ async function loadSSHConfigs() {
       card.querySelector(".host-star").addEventListener("click", (e) => {
         e.stopPropagation();
         toggleStarHost(host.name);
-        loadSSHConfigs();
+        // Animate out then reload
+        card.style.transition = "opacity 0.2s ease, transform 0.2s ease";
+        card.style.opacity = "0";
+        card.style.transform = "scale(0.95)";
+        setTimeout(() => loadSSHConfigs(), 200);
       });
       return card;
     }
@@ -215,6 +219,52 @@ async function handleManualConnect(event) {
     btn.disabled = false;
     btn.textContent = "Connect";
   }
+}
+
+async function handleSaveAndConnect() {
+  const alias = document.getElementById("alias-input").value.trim();
+  const hostname = document.getElementById("host-input").value.trim();
+  const username = document.getElementById("user-input").value.trim();
+  const port = document.getElementById("port-input").value || "22";
+  const keyFile = document.getElementById("key-input").value.trim();
+
+  if (!alias) {
+    showNotification("Enter a name to save this host", "error");
+    document.getElementById("alias-input").focus();
+    return;
+  }
+  if (!hostname) {
+    showNotification("Hostname is required", "error");
+    return;
+  }
+
+  try {
+    const saveResp = await fetch("/api/save-host", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        alias,
+        hostname,
+        username,
+        port: parseInt(port),
+        key_file: keyFile,
+      }),
+    });
+    const saveData = await saveResp.json();
+    if (saveData.error) {
+      showNotification(saveData.error, "error");
+      return;
+    }
+    showNotification(`Saved "${alias}" to ~/.ssh/config`, "success");
+  } catch (e) {
+    showNotification("Failed to save: " + e.message, "error");
+    return;
+  }
+
+  // Now connect
+  document
+    .getElementById("connect-form")
+    .dispatchEvent(new Event("submit", { cancelable: true }));
 }
 
 function onConnected(data) {
