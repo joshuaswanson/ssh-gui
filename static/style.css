@@ -118,6 +118,24 @@ body {
   gap: 6px;
   max-height: 340px;
   overflow-y: auto;
+  padding-right: 4px;
+}
+
+.saved-hosts::-webkit-scrollbar {
+  width: 5px;
+}
+
+.saved-hosts::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.saved-hosts::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.saved-hosts::-webkit-scrollbar-thumb:hover {
+  background: var(--border-light);
 }
 
 .host-card {
@@ -226,9 +244,11 @@ body {
 
 .form-group.flex-1 {
   flex: 1;
+  min-width: 0;
 }
 .form-group.flex-2 {
   flex: 2;
+  min-width: 0;
 }
 
 .form-group label {
@@ -247,6 +267,7 @@ body {
   font-family: var(--font-sans);
   outline: none;
   transition: border-color 0.15s ease;
+  width: 100%;
 }
 
 .form-group input:focus {
