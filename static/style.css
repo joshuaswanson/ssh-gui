@@ -142,7 +142,16 @@ body {
   gap: 6px;
   max-height: 280px;
   overflow-y: auto;
-  padding-right: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  mask-image: linear-gradient(to bottom, black calc(100% - 24px), transparent);
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    black calc(100% - 24px),
+    transparent
+  );
 }
 
 .saved-hosts::-webkit-scrollbar {
@@ -511,7 +520,7 @@ body {
 }
 
 .column-entry:hover {
-  background: var(--bg-tertiary);
+  background: none;
 }
 
 .column-entry.selected {
@@ -671,40 +680,56 @@ body {
   color: var(--text-secondary);
 }
 
-/* Chmod table */
+/* Chmod */
 
-.chmod-table {
-  width: 100%;
-  border-collapse: collapse;
+.chmod-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chmod-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chmod-who {
   font-size: 11px;
-}
-
-.chmod-table th {
-  font-weight: 500;
-  color: var(--text-muted);
-  padding: 3px 8px;
-  text-align: center;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.chmod-table td {
-  padding: 3px 8px;
-  text-align: center;
-}
-
-.chmod-label {
-  text-align: left !important;
   color: var(--text-secondary);
-  font-size: 11px;
+  width: 48px;
+  flex-shrink: 0;
 }
 
-.chmod-check {
-  accent-color: var(--accent);
+.chmod-pills {
+  display: flex;
+  gap: 4px;
+}
+
+.chmod-pill {
+  width: 32px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
   cursor: pointer;
-  width: 14px;
-  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.chmod-pill.active {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* Drag-and-drop */
@@ -953,13 +978,53 @@ body {
 #terminal-container {
   flex: 0 0 calc(45% - var(--toolbar-height) - var(--resize-handle-height));
   overflow: hidden;
-  background: #000;
-  padding: 4px;
+  background: #0d1117;
+  padding: 10px 12px;
 }
 
 #terminal {
   height: 100%;
   width: 100%;
+}
+
+/* ── Context Menu ─────────────────────────────────────────────────── */
+
+.context-menu {
+  position: fixed;
+  z-index: 2000;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  min-width: 160px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.context-menu-item {
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.context-menu-item:hover {
+  background: var(--accent-bg);
+}
+
+.context-menu-item.danger {
+  color: var(--red);
+}
+
+.context-menu-item.danger:hover {
+  background: rgba(248, 81, 73, 0.15);
+}
+
+.context-menu-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 8px;
 }
 
 /* ── Notification ─────────────────────────────────────────────────── */

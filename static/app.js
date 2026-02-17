@@ -661,29 +661,11 @@ function renderColumns() {
                     </div>
                     <div class="file-info-section">
                         <div class="file-info-section-title">Permissions <span class="file-info-raw-mode">${escapeHtml(info.mode)}</span></div>
-                        <table class="chmod-table">
-                            <thead><tr><th></th><th>R</th><th>W</th><th>X</th></tr></thead>
-                            <tbody>
-                                <tr>
-                                    <td class="chmod-label">Owner</td>
-                                    ${chmodCell(info.path, permBits, "owner", "r")}
-                                    ${chmodCell(info.path, permBits, "owner", "w")}
-                                    ${chmodCell(info.path, permBits, "owner", "x")}
-                                </tr>
-                                <tr>
-                                    <td class="chmod-label">Group</td>
-                                    ${chmodCell(info.path, permBits, "group", "r")}
-                                    ${chmodCell(info.path, permBits, "group", "w")}
-                                    ${chmodCell(info.path, permBits, "group", "x")}
-                                </tr>
-                                <tr>
-                                    <td class="chmod-label">Others</td>
-                                    ${chmodCell(info.path, permBits, "others", "r")}
-                                    ${chmodCell(info.path, permBits, "others", "w")}
-                                    ${chmodCell(info.path, permBits, "others", "x")}
-                                </tr>
-                            </tbody>
-                        </table>
+                        <div class="chmod-grid">
+                            ${chmodRow(info.path, permBits, "owner", "Owner")}
+                            ${chmodRow(info.path, permBits, "group", "Group")}
+                            ${chmodRow(info.path, permBits, "others", "Others")}
+                        </div>
                     </div>
                 </div>
             `;
@@ -800,6 +782,21 @@ function renderColumns() {
           state.focusedColumn = colIndex;
           selectEntry(colIndex, entry, { shift: e.shiftKey });
           focusColumns();
+        });
+
+        // Right-click context menu
+        entryEl.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          // Select the entry if not already selected
+          if (!column.selected.has(entry.name)) {
+            state.focusedColumn = colIndex;
+            selectEntry(colIndex, entry);
+          }
+          const fullPath =
+            column.path === "/"
+              ? "/" + entry.name
+              : column.path + "/" + entry.name;
+          showContextMenu(e.clientX, e.clientY, colIndex, entry, fullPath);
         });
       }
 
@@ -1462,9 +1459,22 @@ function permBitsToOctal(bits) {
   );
 }
 
-function chmodCell(path, bits, who, perm) {
-  const checked = bits[who] && bits[who][perm] ? "checked" : "";
-  return `<td><input type="checkbox" class="chmod-check" ${checked} onchange="handleChmod('${escapeAttr(path)}', '${who}', '${perm}', this.checked)" /></td>`;
+function chmodToggle(path, bits, who, perm) {
+  const active = bits[who] && bits[who][perm];
+  const cls = active ? "chmod-pill active" : "chmod-pill";
+  const newVal = active ? "false" : "true";
+  return `<button class="${cls}" onclick="handleChmod('${escapeAttr(path)}', '${who}', '${perm}', ${newVal})">${perm.toUpperCase()}</button>`;
+}
+
+function chmodRow(path, bits, who, label) {
+  return `<div class="chmod-row">
+    <span class="chmod-who">${label}</span>
+    <div class="chmod-pills">
+      ${chmodToggle(path, bits, who, "r")}
+      ${chmodToggle(path, bits, who, "w")}
+      ${chmodToggle(path, bits, who, "x")}
+    </div>
+  </div>`;
 }
 
 async function handleChmod(path, who, perm, value) {
@@ -1496,6 +1506,110 @@ async function handleChmod(path, who, perm, value) {
   }
 
   renderColumns();
+}
+
+// ── Context Menu ─────────────────────────────────────────────────────
+
+function showContextMenu(x, y, colIndex, entry, fullPath) {
+  hideContextMenu();
+
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.id = "context-menu";
+
+  const items = [
+    {
+      label: "Copy Name",
+      action: () => copyToClipboard(entry.name),
+    },
+    {
+      label: "Copy Path",
+      action: () => copyToClipboard(fullPath),
+    },
+    { separator: true },
+    {
+      label: "Rename",
+      action: () => startRename(colIndex, entry.name),
+    },
+    { separator: true },
+    {
+      label: "Delete",
+      action: () => confirmDelete(colIndex, entry, fullPath),
+      danger: true,
+    },
+  ];
+
+  items.forEach((item) => {
+    if (item.separator) {
+      const sep = document.createElement("div");
+      sep.className = "context-menu-separator";
+      menu.appendChild(sep);
+      return;
+    }
+    const el = document.createElement("div");
+    el.className = "context-menu-item" + (item.danger ? " danger" : "");
+    el.textContent = item.label;
+    el.addEventListener("click", () => {
+      hideContextMenu();
+      item.action();
+    });
+    menu.appendChild(el);
+  });
+
+  document.body.appendChild(menu);
+
+  // Position: keep on screen
+  const rect = menu.getBoundingClientRect();
+  if (x + rect.width > window.innerWidth)
+    x = window.innerWidth - rect.width - 8;
+  if (y + rect.height > window.innerHeight)
+    y = window.innerHeight - rect.height - 8;
+  menu.style.left = x + "px";
+  menu.style.top = y + "px";
+
+  // Close on click outside or Escape
+  setTimeout(() => {
+    document.addEventListener("click", hideContextMenu, { once: true });
+    document.addEventListener("contextmenu", hideContextMenu, { once: true });
+  }, 0);
+  document.addEventListener("keydown", handleContextMenuKey);
+}
+
+function hideContextMenu() {
+  const menu = document.getElementById("context-menu");
+  if (menu) menu.remove();
+  document.removeEventListener("keydown", handleContextMenuKey);
+}
+
+function handleContextMenuKey(e) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    hideContextMenu();
+  }
+}
+
+async function confirmDelete(colIndex, entry, fullPath) {
+  const name = entry.name;
+  const what = entry.is_dir ? "folder" : "file";
+  if (!confirm(`Delete ${what} "${name}"?`)) return;
+
+  try {
+    const resp = await fetch("/api/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: fullPath, is_dir: entry.is_dir }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showNotification(data.error, "error");
+    } else {
+      showNotification(`Deleted ${name}`, "success");
+    }
+  } catch (e) {
+    showNotification("Delete failed: " + e.message, "error");
+  }
+
+  await refreshColumns();
 }
 
 // ── Clipboard ────────────────────────────────────────────────────────
