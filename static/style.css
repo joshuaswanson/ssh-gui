@@ -75,12 +75,25 @@ body {
 
 .connect-body {
   display: flex;
-  gap: 40px;
+  gap: 0;
 }
 
 .connect-panel {
   flex: 1;
   min-width: 0;
+  padding: 0 24px;
+}
+
+.connect-panel + .connect-panel {
+  border-left: 1px solid var(--border);
+}
+
+.connect-panel:first-child {
+  padding-left: 0;
+}
+
+.connect-panel:last-child {
+  padding-right: 0;
 }
 
 .panel-title {
