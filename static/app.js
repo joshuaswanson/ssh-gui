@@ -887,6 +887,12 @@ function renderColumns() {
           focusColumns();
         });
 
+        // Double-click to rename
+        entryEl.addEventListener("dblclick", (e) => {
+          e.preventDefault();
+          startRename(colIndex, entry.name);
+        });
+
         // Right-click context menu
         entryEl.addEventListener("contextmenu", (e) => {
           e.preventDefault();
