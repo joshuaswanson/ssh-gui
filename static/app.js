@@ -315,7 +315,7 @@ async function selectEntry(colIndex, entry, opts = {}) {
       });
     }
   } else {
-    // File selected -- show info panel
+    // File selected -- show info panel + preview column
     const currentPath = state.columns[colIndex].path;
     const filePath =
       currentPath === "/" ? "/" + entry.name : currentPath + "/" + entry.name;
@@ -334,11 +334,20 @@ async function selectEntry(colIndex, entry, opts = {}) {
       entries: [],
       selected: new Set(),
       lastClickedIndex: -1,
+      selectionCursor: -1,
       fileInfo,
     });
 
-    // Auto-fetch preview for text files under 1MB
+    // Add preview column for text files under 1MB
     if (entry.size <= 1024 * 1024) {
+      state.columns.push({
+        path: null,
+        entries: [],
+        selected: new Set(),
+        lastClickedIndex: -1,
+        selectionCursor: -1,
+        filePreview: { path: filePath, name: entry.name },
+      });
       fetchPreview(filePath);
     }
   }
@@ -366,20 +375,21 @@ async function fetchPreview(filePath) {
     });
     const data = await response.json();
 
-    // Find the file info panel column that matches this path
-    const infoCol = state.columns.find(
-      (c) => c.fileInfo && c.fileInfo.path === filePath,
+    // Find the preview column that matches this path
+    const previewCol = state.columns.find(
+      (c) => c.filePreview && c.filePreview.path === filePath,
     );
-    if (!infoCol) return;
+    if (!previewCol) return;
 
     if (data.error) {
-      infoCol.fileInfo.previewError = data.error;
+      previewCol.filePreview.error = data.error;
     } else if (data.binary) {
-      infoCol.fileInfo.previewBinary = true;
+      previewCol.filePreview.binary = true;
     } else {
-      infoCol.fileInfo.previewContent = data.content;
-      infoCol.fileInfo.previewTruncated = data.truncated;
+      previewCol.filePreview.content = data.content;
+      previewCol.filePreview.truncated = data.truncated;
     }
+    previewCol.filePreview.loaded = true;
 
     renderColumns();
   } catch (e) {
@@ -464,33 +474,70 @@ function renderColumns() {
   state.columns.forEach((column, colIndex) => {
     const colEl = document.createElement("div");
 
+    // File preview column
+    if (column.filePreview) {
+      colEl.className = "column file-preview-panel";
+      const preview = column.filePreview;
+
+      if (column.width) {
+        colEl.style.minWidth = column.width + "px";
+        colEl.style.width = column.width + "px";
+      }
+
+      let bodyHtml;
+      if (!preview.loaded) {
+        bodyHtml = '<div class="file-preview-message">Loading...</div>';
+      } else if (preview.error) {
+        bodyHtml = `<div class="file-preview-message">${escapeHtml(preview.error)}</div>`;
+      } else if (preview.binary) {
+        bodyHtml =
+          '<div class="file-preview-message">Binary file -- cannot preview</div>';
+      } else if (preview.content != null) {
+        const lines = preview.content.split("\n");
+        const lineNums = lines
+          .map((_, i) => `<span>${i + 1}</span>`)
+          .join("\n");
+        const code = escapeHtml(preview.content);
+        bodyHtml = `<div class="file-preview-code"><div class="file-preview-lines">${lineNums}</div><pre class="file-preview-content">${code}</pre></div>`;
+        if (preview.truncated) {
+          bodyHtml +=
+            '<div class="file-preview-message">Truncated -- first 64KB shown</div>';
+        }
+      } else {
+        bodyHtml =
+          '<div class="file-preview-message">No preview available</div>';
+      }
+
+      colEl.innerHTML = `
+                <div class="file-preview-header">
+                    <span class="file-preview-title">${escapeHtml(preview.name)}</span>
+                    <span class="file-preview-readonly">Read-only</span>
+                </div>
+                ${bodyHtml}
+            `;
+
+      container.appendChild(colEl);
+      if (colIndex < state.columns.length - 1) {
+        container.appendChild(createColumnResizeHandle(colIndex, colEl));
+      }
+      return;
+    }
+
     // File info panel
     if (column.fileInfo) {
       colEl.className = "column file-info-panel";
       const info = column.fileInfo;
       const perms = humanizePermissions(info.mode);
 
-      let previewHtml = "";
-      if (info.size > 1024 * 1024) {
-        previewHtml =
-          '<div class="file-preview-message">File too large to preview</div>';
-      } else if (info.previewBinary) {
-        previewHtml = '<div class="file-preview-message">Binary file</div>';
-      } else if (info.previewError) {
-        previewHtml = `<div class="file-preview-message">${escapeHtml(info.previewError)}</div>`;
-      } else if (info.previewContent != null) {
-        previewHtml = `<div class="file-preview">${escapeHtml(info.previewContent)}</div>`;
-        if (info.previewTruncated) {
-          previewHtml +=
-            '<div class="file-preview-message">Truncated (first 64KB shown)</div>';
-        }
-      }
-
       colEl.innerHTML = `
                 <div class="file-info-header">
                     <div class="file-info-icon">${FILE_ICON_LARGE}</div>
                     <div class="file-info-name">${escapeHtml(info.name)}</div>
                     ${info.is_link ? '<div class="file-info-badge">Symlink</div>' : ""}
+                </div>
+                <div class="file-info-actions">
+                    <button class="btn-copy" onclick="copyToClipboard('${escapeAttr(info.name)}')" title="Copy name">Copy Name</button>
+                    <button class="btn-copy" onclick="copyToClipboard('${escapeAttr(info.path)}')" title="Copy path">Copy Path</button>
                 </div>
                 <div class="file-info-details">
                     <div class="file-info-section">
@@ -524,7 +571,6 @@ function renderColumns() {
                         </div>
                     </div>
                 </div>
-                ${previewHtml}
             `;
 
       if (column.width) {
@@ -1107,6 +1153,18 @@ function cdToBrowserPath() {
     });
     state.terminal.focus();
   }
+}
+
+// ── Clipboard ────────────────────────────────────────────────────────
+
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    showNotification("Copied to clipboard", "success");
+  });
+}
+
+function escapeAttr(str) {
+  return str.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
 // ── UI Helpers ───────────────────────────────────────────────────────
