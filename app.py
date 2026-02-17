@@ -509,9 +509,12 @@ def tmux_status():
     if not ssh_state["client"]:
         return jsonify({"active": False, "session": None})
 
-    out, _ = run_ssh_command("tmux display-message -p '#{session_name}' 2>/dev/null")
+    # Check if any tmux server is running (not just our shell's session)
+    out, _ = run_ssh_command("tmux list-sessions -F '#{session_name}' 2>/dev/null")
     if out:
-        return jsonify({"active": True, "session": out})
+        # Return the first session name
+        first_session = out.split("\n")[0].strip()
+        return jsonify({"active": True, "session": first_session})
     return jsonify({"active": False, "session": None})
 
 
