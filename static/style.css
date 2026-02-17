@@ -619,27 +619,115 @@ body {
   color: var(--text-primary);
 }
 
-/* File preview */
+/* File info actions */
 
-.file-preview {
-  margin-top: 8px;
-  background: var(--bg-primary);
+.file-info-actions {
+  display: flex;
+  gap: 6px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.btn-copy {
+  flex: 1;
+  padding: 5px 8px;
+  background: var(--bg-tertiary);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
-  font-family: var(--font-mono);
+  border-radius: 4px;
+  color: var(--text-secondary);
   font-size: 11px;
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-copy:hover {
+  background: var(--bg-hover);
   color: var(--text-primary);
-  white-space: pre;
+  border-color: var(--border-light);
+}
+
+/* File preview panel */
+
+.file-preview-panel {
+  min-width: 400px;
+  width: 400px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.file-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.file-preview-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-preview-readonly {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.file-preview-code {
+  display: flex;
+  flex: 1;
   overflow: auto;
-  max-height: 300px;
+  background: var(--bg-primary);
+}
+
+.file-preview-lines {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
+  text-align: right;
+  user-select: none;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+}
+
+.file-preview-lines span {
+  padding: 0 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.file-preview-content {
+  margin: 0;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
   tab-size: 4;
+  flex: 1;
+  min-width: 0;
 }
 
 .file-preview-message {
-  margin-top: 8px;
-  padding: 16px;
+  padding: 24px 16px;
   text-align: center;
   color: var(--text-muted);
   font-size: 12px;
