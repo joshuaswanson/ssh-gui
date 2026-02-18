@@ -8,7 +8,9 @@ import shlex
 import base64
 from pathlib import Path
 
-from flask import Flask, render_template, request, jsonify
+import io
+
+from flask import Flask, render_template, request, jsonify, send_file
 from flask_socketio import SocketIO, emit
 import paramiko
 
@@ -512,6 +514,29 @@ def preview_file():
             "truncated": truncated,
             "size": file_size,
         })
+    except PermissionError:
+        return jsonify({"error": "Permission denied"}), 403
+    except FileNotFoundError:
+        return jsonify({"error": f"Not found: {path}"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/download", methods=["POST"])
+def download_file():
+    if not ssh_state["sftp"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    path = request.json.get("path", "")
+    if not path:
+        return jsonify({"error": "path is required"}), 400
+
+    try:
+        with ssh_state["sftp"].open(path, "rb") as f:
+            data = f.read()
+        buf = io.BytesIO(data)
+        filename = posixpath.basename(path)
+        return send_file(buf, as_attachment=True, download_name=filename)
     except PermissionError:
         return jsonify({"error": "Permission denied"}), 403
     except FileNotFoundError:

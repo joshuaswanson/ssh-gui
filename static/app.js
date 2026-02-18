@@ -37,6 +37,75 @@ const state = {
 
 let selectGeneration = 0;
 
+// ── Cache ───────────────────────────────────────────────────────────
+
+const apiCache = {
+  _store: new Map(),
+
+  _key(url, body) {
+    return url + "|" + (body ? JSON.stringify(body) : "");
+  },
+
+  get(url, body) {
+    const key = this._key(url, body);
+    const entry = this._store.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expires) {
+      this._store.delete(key);
+      return null;
+    }
+    return entry.data;
+  },
+
+  set(url, body, data, ttlMs) {
+    const key = this._key(url, body);
+    this._store.set(key, { data, expires: Date.now() + ttlMs });
+  },
+
+  // Invalidate entries whose URL or body key contains the given path
+  invalidatePath(path) {
+    for (const [key] of this._store) {
+      if (key.includes(path)) this._store.delete(key);
+    }
+  },
+
+  // Invalidate all entries for a given URL prefix
+  invalidateUrl(url) {
+    for (const [key] of this._store) {
+      if (key.startsWith(url)) this._store.delete(key);
+    }
+  },
+
+  clear() {
+    this._store.clear();
+  },
+};
+
+// Cached fetch helper: returns cached data or fetches, caches, and returns
+async function cachedPost(url, body, ttlMs) {
+  const cached = apiCache.get(url, body);
+  if (cached) return cached;
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json();
+  if (resp.ok) apiCache.set(url, body, data, ttlMs);
+  return data;
+}
+
+async function cachedGet(url, ttlMs) {
+  const cached = apiCache.get(url, null);
+  if (cached) return cached;
+
+  const resp = await fetch(url);
+  const data = await resp.json();
+  if (resp.ok) apiCache.set(url, null, data, ttlMs);
+  return data;
+}
+
 // ── Icons ────────────────────────────────────────────────────────────
 
 const FOLDER_ICON = `<svg width="16" height="16" viewBox="0 0 16 16" fill="#58a6ff">
@@ -157,8 +226,7 @@ function updateThemeIcons(theme) {
 
 async function loadSSHConfigs() {
   try {
-    const response = await fetch("/api/ssh-configs");
-    const data = await response.json();
+    const data = await cachedGet("/api/ssh-configs", 300000);
 
     const starredContainer = document.getElementById("starred-hosts");
     const container = document.getElementById("saved-hosts");
@@ -476,6 +544,7 @@ async function handleDisconnect() {
 
   stopTmuxPolling();
   closePackageManager();
+  apiCache.clear();
 
   showScreen("connect");
 }
@@ -484,19 +553,11 @@ async function handleDisconnect() {
 
 async function navigateTo(path) {
   try {
-    const response = await fetch("/api/ls", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path }),
-    });
-
-    if (!response.ok) {
-      const err = await response.json();
-      showNotification(err.error || "Failed to list directory", "error");
+    const data = await cachedPost("/api/ls", { path }, 30000);
+    if (data.error) {
+      showNotification(data.error || "Failed to list directory", "error");
       return;
     }
-
-    const data = await response.json();
     state.columns = [
       {
         path: data.path,
@@ -572,16 +633,11 @@ async function selectEntry(colIndex, entry, opts = {}) {
     renderColumns();
 
     try {
-      const response = await fetch("/api/ls", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: newPath }),
-      });
+      const data = await cachedPost("/api/ls", { path: newPath }, 30000);
 
       if (gen !== selectGeneration) return; // stale
 
-      if (response.ok) {
-        const data = await response.json();
+      if (!data.error) {
         // Re-truncate in case state changed during await
         state.columns = state.columns.slice(0, colIndex + 1);
         state.columns.push({
@@ -594,7 +650,6 @@ async function selectEntry(colIndex, entry, opts = {}) {
         fetchDirSizes(state.columns.length - 1);
         fetchGitBranch(data.path);
       } else {
-        const err = await response.json();
         state.columns = state.columns.slice(0, colIndex + 1);
         state.columns.push({
           path: newPath,
@@ -602,7 +657,7 @@ async function selectEntry(colIndex, entry, opts = {}) {
           selected: new Set(),
           lastClickedIndex: -1,
           selectionCursor: -1,
-          error: err.error,
+          error: data.error,
         });
       }
     } catch (e) {
@@ -750,9 +805,8 @@ function sortEntries(entries, mode, asc) {
       break;
     }
     default: {
-      // "name" -- folders first, then alpha
+      // "name" -- mixed files and folders, purely alphabetical
       sorted.sort((a, b) => {
-        if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
         return a.name.toLowerCase().localeCompare(b.name.toLowerCase()) * dir;
       });
     }
@@ -1238,6 +1292,9 @@ async function handleDrop(e, destDir) {
 }
 
 async function refreshColumns() {
+  // Invalidate ls and dir-sizes cache so re-fetches hit the server
+  apiCache.invalidateUrl("/api/ls");
+  apiCache.invalidateUrl("/api/dir-sizes");
   // Re-fetch all directory columns to reflect moves
   for (let i = 0; i < state.columns.length; i++) {
     const col = state.columns[i];
@@ -1356,12 +1413,7 @@ function updatePathBar() {
 
 async function fetchGitInfo(filePath, colIndex) {
   try {
-    const resp = await fetch("/api/git-info", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: filePath }),
-    });
-    const data = await resp.json();
+    const data = await cachedPost("/api/git-info", { path: filePath }, 120000);
 
     // Store author on the fileInfo object and re-render
     if (data.created_by) {
@@ -1384,12 +1436,7 @@ async function fetchGitInfo(filePath, colIndex) {
 
 async function fetchGitBranch(dirPath) {
   try {
-    const resp = await fetch("/api/git-info", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: dirPath }),
-    });
-    const data = await resp.json();
+    const data = await cachedPost("/api/git-info", { path: dirPath }, 120000);
     state.gitBranch = data.branch || null;
     updatePathBar();
   } catch {
@@ -1788,12 +1835,11 @@ async function fetchDirSizes(colIndex) {
   column.sizesLoaded = true;
 
   try {
-    const resp = await fetch("/api/dir-sizes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: column.path, names: dirNames }),
-    });
-    const data = await resp.json();
+    const data = await cachedPost(
+      "/api/dir-sizes",
+      { path: column.path, names: dirNames },
+      60000,
+    );
     if (data.sizes) {
       // Verify column still exists
       if (
@@ -1969,44 +2015,58 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
   menu.className = "context-menu";
   menu.id = "context-menu";
 
+  const column = state.columns[colIndex];
+  const selectedCount = column ? column.selected.size : 1;
+  const isMulti = selectedCount > 1;
+
   const shortcuts = getSidebarShortcuts(state.host);
   const isFavorited = shortcuts.some((s) => s.path === fullPath);
 
-  const items = [
-    {
-      label: "Copy Name",
-      action: () => copyToClipboard(entry.name),
-    },
-    {
-      label: "Copy Path",
-      action: () => copyToClipboard(fullPath),
-    },
-    { separator: true },
-    {
-      label: isFavorited ? "Remove from Favorites" : "Add to Favorites",
-      action: () => {
-        const current = getSidebarShortcuts(state.host);
-        if (isFavorited) {
-          const idx = current.findIndex((s) => s.path === fullPath);
-          if (idx >= 0) current.splice(idx, 1);
-        } else {
-          current.push({ path: fullPath, name: entry.name });
-        }
-        saveSidebarShortcuts(state.host, current);
-        renderSidebar();
-      },
-    },
-    {
-      label: "Rename",
-      action: () => startRename(colIndex, entry.name),
-    },
-    { separator: true },
-    {
-      label: "Delete",
-      action: () => confirmDelete(colIndex, entry, fullPath),
+  const items = [];
+
+  if (isMulti) {
+    // Multi-selection: only show actions that make sense for multiple items
+    items.push({
+      label: `Delete ${selectedCount} items`,
+      action: () => confirmDeleteMulti(colIndex),
       danger: true,
-    },
-  ];
+    });
+  } else {
+    items.push(
+      { label: "Copy Name", action: () => copyToClipboard(entry.name) },
+      { label: "Copy Path", action: () => copyToClipboard(fullPath) },
+    );
+    if (!entry.is_dir) {
+      items.push({
+        label: "Download",
+        action: () => downloadFile(fullPath),
+      });
+    }
+    items.push(
+      { separator: true },
+      {
+        label: isFavorited ? "Remove from Favorites" : "Add to Favorites",
+        action: () => {
+          const current = getSidebarShortcuts(state.host);
+          if (isFavorited) {
+            const idx = current.findIndex((s) => s.path === fullPath);
+            if (idx >= 0) current.splice(idx, 1);
+          } else {
+            current.push({ path: fullPath, name: entry.name });
+          }
+          saveSidebarShortcuts(state.host, current);
+          renderSidebar();
+        },
+      },
+      { label: "Rename", action: () => startRename(colIndex, entry.name) },
+      { separator: true },
+      {
+        label: "Delete",
+        action: () => confirmDelete(colIndex, entry, fullPath),
+        danger: true,
+      },
+    );
+  }
 
   items.forEach((item) => {
     if (item.separator) {
@@ -2097,6 +2157,63 @@ async function confirmDelete(colIndex, entry, fullPath) {
   }
 
   await refreshColumns();
+}
+
+async function confirmDeleteMulti(colIndex) {
+  const column = state.columns[colIndex];
+  if (!column) return;
+  const names = [...column.selected];
+  if (!confirm(`Delete ${names.length} items?`)) return;
+
+  let errors = 0;
+  for (const name of names) {
+    const entry = column.entries.find((e) => e.name === name);
+    if (!entry) continue;
+    const fullPath =
+      column.path === "/" ? "/" + name : column.path + "/" + name;
+    try {
+      const resp = await fetch("/api/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: fullPath, is_dir: entry.is_dir }),
+      });
+      const data = await resp.json();
+      if (data.error) errors++;
+    } catch {
+      errors++;
+    }
+  }
+
+  if (errors > 0) {
+    showNotification(`${errors} item(s) failed to delete`, "error");
+  } else {
+    showNotification(`Deleted ${names.length} items`, "success");
+  }
+  await refreshColumns();
+}
+
+async function downloadFile(path) {
+  try {
+    const resp = await fetch("/api/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      showNotification(err.error || "Download failed", "error");
+      return;
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = path.split("/").pop();
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    showNotification("Download failed: " + e.message, "error");
+  }
 }
 
 // ── Clipboard ────────────────────────────────────────────────────────
@@ -2759,8 +2876,10 @@ async function openPackageManager() {
   renderPackagePanel();
 
   try {
-    const detectResp = await fetch("/api/packages/detect");
-    state.packagePanel.detectInfo = await detectResp.json();
+    state.packagePanel.detectInfo = await cachedGet(
+      "/api/packages/detect",
+      120000,
+    );
 
     // Use first nearby venv or active venv
     if (state.packagePanel.detectInfo.active_venv) {
