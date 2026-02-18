@@ -1,6 +1,6 @@
 # SSH GUI
 
-I have a computer science degree and I still can't remember any CLI commands beyond `cd` and `ls`. Every time I need to do something on a remote server it's 5 minutes of Googling basic commands I've already Googled 400 times. So I built this - a nice GUI that lets me SSH into a remote server and do all the common file operations by just clicking around like a normal person. The terminal is still there for when I'm feeling brave.
+I have a computer science degree and I still can't remember any CLI commands beyond `cd` and `ls`. Every time I need to do something on a remote server it's back to Googling basic commands I've already Googled 400 times. So I built this - a nice GUI that lets me SSH into a remote server and do all the common file operations by just clicking around like a normal person. If you know how to use Finder on macOS, you already know how to use this. The terminal is still there for when I'm feeling brave.
 
 ## Features
 
