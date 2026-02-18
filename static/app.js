@@ -572,6 +572,7 @@ async function navigateTo(path) {
     updateBreadcrumb();
     fetchDirSizes(0);
     fetchGitBranch(data.path);
+    if (state.sortMode === "creator") fetchColumnAuthors();
   } catch (e) {
     showNotification("Failed to browse: " + e.message, "error");
   }
@@ -649,6 +650,7 @@ async function selectEntry(colIndex, entry, opts = {}) {
         });
         fetchDirSizes(state.columns.length - 1);
         fetchGitBranch(data.path);
+        if (state.sortMode === "creator") fetchColumnAuthors();
       } else {
         state.columns = state.columns.slice(0, colIndex + 1);
         state.columns.push({
@@ -845,13 +847,16 @@ async function fetchColumnAuthors() {
   // Fetch git authors for all visible directory columns
   for (let i = 0; i < state.columns.length; i++) {
     const col = state.columns[i];
-    if (!col.path || col.fileInfo || col.filePreview || col._authorsFetched)
-      continue;
+    if (!col.path || col.fileInfo || col.filePreview) continue;
+    // Skip if authors already loaded and entries have them
+    if (col._authorsFetched && col.entries.some((e) => e._gitAuthor)) continue;
     col._authorsFetched = true;
+    const names = col.entries.map((e) => e.name);
+    if (names.length === 0) continue;
     try {
       const data = await cachedPost(
         "/api/git-authors",
-        { path: col.path },
+        { path: col.path, names },
         120000,
       );
       if (data.authors) {
@@ -1059,7 +1064,21 @@ function renderColumns() {
       return;
     }
 
+    let lastCreatorSection = null;
+    const hasAnyAuthor =
+      state.sortMode === "creator" && entries.some((e) => e._gitAuthor);
     entries.forEach((entry) => {
+      // Show section headers when sorting by creator (only if column has git data)
+      if (hasAnyAuthor) {
+        const author = entry._gitAuthor || "Unknown";
+        if (author !== lastCreatorSection) {
+          lastCreatorSection = author;
+          const header = document.createElement("div");
+          header.className = "column-section-header";
+          header.textContent = author;
+          colEl.appendChild(header);
+        }
+      }
       const entryEl = document.createElement("div");
       entryEl.className = "column-entry";
       if (column.selected.has(entry.name)) {
