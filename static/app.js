@@ -12,6 +12,7 @@ const state = {
   socket: null,
   showHidden: false,
   isResizing: false,
+  terminalHidden: false,
   sortMode: "name",
   sortAsc: true,
   dragSources: [],
@@ -591,6 +592,7 @@ async function selectEntry(colIndex, entry, opts = {}) {
           selectionCursor: -1,
         });
         fetchDirSizes(state.columns.length - 1);
+        fetchGitBranch(data.path);
       } else {
         const err = await response.json();
         state.columns = state.columns.slice(0, colIndex + 1);
@@ -888,10 +890,14 @@ function renderColumns() {
                             <span class="label">Modified</span>
                             <span class="value">${formatDate(info.mtime)}</span>
                         </div>
-                        <div class="file-info-row" id="git-author-row-${colIndex}" style="display:none">
+                        ${
+                          info._gitAuthor
+                            ? `<div class="file-info-row">
                             <span class="label">Created by</span>
-                            <span class="value" id="git-author-val-${colIndex}"></span>
-                        </div>
+                            <span class="value">${escapeHtml(info._gitAuthor)}</span>
+                        </div>`
+                            : ""
+                        }
                     </div>
                     <div class="file-info-section">
                         <div class="file-info-section-title">Permissions <span class="file-info-raw-mode">${escapeHtml(info.mode)}</span></div>
@@ -1345,7 +1351,7 @@ function updatePathBar() {
   const branchHtml = state.gitBranch
     ? `<span class="path-bar-branch">${escapeHtml(state.gitBranch)}</span>`
     : "";
-  pathBar.innerHTML = `<span class="path-bar-text"><bdi>${escapeHtml(displayPath)}</bdi></span>${branchHtml}<button class="path-bar-copy" onclick="copyToClipboard('${escapeAttr(displayPath)}')" title="Copy path">${COPY_ICON}</button>`;
+  pathBar.innerHTML = `<span class="path-bar-text"><bdi>${escapeHtml(displayPath)}</bdi></span><button class="path-bar-copy" onclick="copyToClipboard('${escapeAttr(displayPath)}')" title="Copy path">${COPY_ICON}</button>${branchHtml}`;
 }
 
 async function fetchGitInfo(filePath, colIndex) {
@@ -1357,13 +1363,12 @@ async function fetchGitInfo(filePath, colIndex) {
     });
     const data = await resp.json();
 
-    // Update author in the file info panel
+    // Store author on the fileInfo object and re-render
     if (data.created_by) {
-      const row = document.getElementById("git-author-row-" + colIndex);
-      const val = document.getElementById("git-author-val-" + colIndex);
-      if (row && val) {
-        val.textContent = data.created_by;
-        row.style.display = "";
+      const col = state.columns[colIndex];
+      if (col && col.fileInfo && col.fileInfo.path === filePath) {
+        col.fileInfo._gitAuthor = data.created_by;
+        renderColumns();
       }
     }
 
@@ -1929,11 +1934,7 @@ function showColumnContextMenu(x, y, dirPath) {
   menu.style.left = x + "px";
   menu.style.top = y + "px";
 
-  setTimeout(() => {
-    document.addEventListener("click", hideContextMenu, { once: true });
-    document.addEventListener("contextmenu", hideContextMenu, { once: true });
-  }, 0);
-  document.addEventListener("keydown", handleContextMenuKey);
+  registerContextMenuDismiss();
 }
 
 async function createNewFolder(dirPath) {
@@ -2035,18 +2036,36 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
   menu.style.left = x + "px";
   menu.style.top = y + "px";
 
-  // Close on click outside or Escape
-  setTimeout(() => {
-    document.addEventListener("click", hideContextMenu, { once: true });
-    document.addEventListener("contextmenu", hideContextMenu, { once: true });
-  }, 0);
-  document.addEventListener("keydown", handleContextMenuKey);
+  registerContextMenuDismiss();
 }
+
+let _ctxClickHandler = null;
+let _ctxContextHandler = null;
 
 function hideContextMenu() {
   const menu = document.getElementById("context-menu");
   if (menu) menu.remove();
   document.removeEventListener("keydown", handleContextMenuKey);
+  if (_ctxClickHandler) {
+    document.removeEventListener("click", _ctxClickHandler);
+    _ctxClickHandler = null;
+  }
+  if (_ctxContextHandler) {
+    document.removeEventListener("contextmenu", _ctxContextHandler);
+    _ctxContextHandler = null;
+  }
+}
+
+function registerContextMenuDismiss() {
+  _ctxClickHandler = () => hideContextMenu();
+  _ctxContextHandler = () => hideContextMenu();
+  setTimeout(() => {
+    document.addEventListener("click", _ctxClickHandler, { once: true });
+    document.addEventListener("contextmenu", _ctxContextHandler, {
+      once: true,
+    });
+  }, 0);
+  document.addEventListener("keydown", handleContextMenuKey);
 }
 
 function handleContextMenuKey(e) {
@@ -2195,13 +2214,45 @@ function setupResizeHandle() {
     const browserContainer = document.getElementById("browser-container");
     const terminalContainer = document.getElementById("terminal-container");
     const toolbar = document.getElementById("toolbar");
+    const tmuxBar = document.getElementById("tmux-bar");
+    const pathBar = document.getElementById("path-bar");
 
     const rect = mainScreen.getBoundingClientRect();
     const toolbarHeight = toolbar.offsetHeight;
     const handleHeight = 4;
+    const distFromBottom = rect.bottom - e.clientY;
 
-    const availableHeight = rect.height - toolbarHeight - handleHeight;
-    const mouseY = e.clientY - rect.top - toolbarHeight;
+    // Snap zone: if mouse is within 50px of the bottom, hide terminal
+    if (distFromBottom < 50) {
+      if (!state.terminalHidden) {
+        state.terminalHidden = true;
+        browserContainer.style.flex = "1 1 auto";
+        terminalContainer.style.flex = "0 0 0px";
+        terminalContainer.style.display = "none";
+        if (tmuxBar) tmuxBar.style.display = "none";
+      }
+      return;
+    }
+
+    // Snap back: if terminal was hidden and user drags above snap zone
+    if (state.terminalHidden) {
+      state.terminalHidden = false;
+      terminalContainer.style.display = "";
+      if (tmuxBar) tmuxBar.style.display = "";
+    }
+
+    const pathBarHeight = pathBar ? pathBar.offsetHeight : 0;
+    const tmuxBarHeight =
+      tmuxBar && !tmuxBar.classList.contains("hidden")
+        ? tmuxBar.offsetHeight
+        : 0;
+    const availableHeight =
+      rect.height -
+      toolbarHeight -
+      handleHeight -
+      pathBarHeight -
+      tmuxBarHeight;
+    const mouseY = e.clientY - rect.top - toolbarHeight - pathBarHeight;
 
     const browserFraction = Math.max(
       0.15,
@@ -2222,7 +2273,7 @@ function setupResizeHandle() {
       state.isResizing = false;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      if (state.fitAddon) {
+      if (state.fitAddon && !state.terminalHidden) {
         state.fitAddon.fit();
       }
     }
@@ -2458,11 +2509,7 @@ function showSidebarContextMenu(x, y, shortcutIndex) {
   menu.style.left = x + "px";
   menu.style.top = y + "px";
 
-  setTimeout(() => {
-    document.addEventListener("click", hideContextMenu, { once: true });
-    document.addEventListener("contextmenu", hideContextMenu, { once: true });
-  }, 0);
-  document.addEventListener("keydown", handleContextMenuKey);
+  registerContextMenuDismiss();
 }
 
 // ── Tmux GUI ─────────────────────────────────────────────────────────
@@ -2633,11 +2680,7 @@ function showTmuxContextMenu(x, y, win) {
   menu.style.left = x + "px";
   menu.style.top = y + "px";
 
-  setTimeout(() => {
-    document.addEventListener("click", hideContextMenu, { once: true });
-    document.addEventListener("contextmenu", hideContextMenu, { once: true });
-  }, 0);
-  document.addEventListener("keydown", handleContextMenuKey);
+  registerContextMenuDismiss();
 }
 
 async function tmuxNewWindow() {

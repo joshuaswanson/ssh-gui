@@ -336,7 +336,8 @@ def get_dir_sizes():
                 try:
                     name = posixpath.basename(dir_path.rstrip("/"))
                     val = int(size_str)
-                    if name not in sizes:
+                    # Skip 0 values -- they come from the fallback when du fails
+                    if val > 0 and name not in sizes:
                         sizes[name] = val
                 except ValueError:
                     pass
