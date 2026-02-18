@@ -40,3 +40,7 @@ On macOS, double-click `start.command` to launch the server and open Safari auto
 - Flask + Flask-SocketIO (web server and WebSocket)
 - Paramiko (SSH/SFTP client)
 - xterm.js (terminal emulator, loaded via CDN)
+
+## Support
+
+If you find this useful, [buy me a coffee](https://buymeacoffee.com/swanson).
