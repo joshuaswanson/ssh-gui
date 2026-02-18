@@ -591,6 +591,52 @@ def git_info():
     return jsonify(result)
 
 
+@app.route("/api/git-authors", methods=["POST"])
+def git_authors():
+    """Bulk fetch git authors for all files in a directory."""
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    path = request.json.get("path", "")
+    if not path:
+        return jsonify({"error": "path is required"}), 400
+
+    quoted = shlex.quote(path)
+
+    # Check if this directory is inside a git repo
+    cmd = f"cd {quoted} && git rev-parse --show-toplevel 2>/dev/null"
+    _, stdout, _ = ssh_state["client"].exec_command(cmd)
+    repo_root = stdout.read().decode().strip()
+    if not repo_root:
+        return jsonify({"authors": {}})
+
+    # Get the first author for each file using git log
+    # Uses --name-only to get filenames and --diff-filter=A for initial commits
+    cmd = (
+        f"cd {quoted} && "
+        f"git log --diff-filter=A --format='%H %an' --name-only -- . 2>/dev/null"
+    )
+    _, stdout, _ = ssh_state["client"].exec_command(cmd)
+    output = stdout.read().decode()
+
+    authors = {}
+    current_author = None
+    for line in output.split("\n"):
+        line = line.strip()
+        if not line:
+            current_author = None
+            continue
+        # Lines with a space and 40-char hash prefix are commit lines
+        if " " in line and len(line.split(" ", 1)[0]) == 40:
+            current_author = line.split(" ", 1)[1]
+        elif current_author and "/" not in line:
+            # Plain filename (no subdirectory) -- first occurrence wins
+            if line not in authors:
+                authors[line] = current_author
+
+    return jsonify({"authors": authors})
+
+
 # ── Tmux ───────────────────────────────────────────────────────────
 
 

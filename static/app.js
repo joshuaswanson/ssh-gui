@@ -804,6 +804,18 @@ function sortEntries(entries, mode, asc) {
       });
       break;
     }
+    case "creator": {
+      sorted.sort((a, b) => {
+        const authorA = (a._gitAuthor || "").toLowerCase();
+        const authorB = (b._gitAuthor || "").toLowerCase();
+        // Items without author go to the end
+        if (!authorA && authorB) return 1;
+        if (authorA && !authorB) return -1;
+        if (authorA !== authorB) return authorA.localeCompare(authorB) * dir;
+        return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+      });
+      break;
+    }
     default: {
       // "name" -- mixed files and folders, purely alphabetical
       sorted.sort((a, b) => {
@@ -822,8 +834,38 @@ function getExtension(name) {
 function changeSort() {
   const select = document.getElementById("sort-select");
   state.sortMode = select.value;
+  if (state.sortMode === "creator") {
+    fetchColumnAuthors();
+  }
   renderColumns();
   updateSortDirIcon();
+}
+
+async function fetchColumnAuthors() {
+  // Fetch git authors for all visible directory columns
+  for (let i = 0; i < state.columns.length; i++) {
+    const col = state.columns[i];
+    if (!col.path || col.fileInfo || col.filePreview || col._authorsFetched)
+      continue;
+    col._authorsFetched = true;
+    try {
+      const data = await cachedPost(
+        "/api/git-authors",
+        { path: col.path },
+        120000,
+      );
+      if (data.authors) {
+        for (const entry of col.entries) {
+          if (data.authors[entry.name]) {
+            entry._gitAuthor = data.authors[entry.name];
+          }
+        }
+        renderColumns();
+      }
+    } catch {
+      // not in a git repo
+    }
+  }
 }
 
 function toggleSortDirection() {
@@ -1352,7 +1394,13 @@ function updateBreadcrumb() {
   const rootEl = document.createElement("span");
   rootEl.className = "breadcrumb-item";
   rootEl.textContent = "/";
+  rootEl.draggable = true;
   rootEl.addEventListener("click", () => navigateToBreadcrumb("/"));
+  rootEl.addEventListener("dragstart", (e) => {
+    e.dataTransfer.setData("text/plain", "/");
+    e.dataTransfer.setData("x-dir-path", "/");
+    e.dataTransfer.effectAllowed = "copyMove";
+  });
   breadcrumb.appendChild(rootEl);
 
   let buildPath = "";
@@ -1370,7 +1418,13 @@ function updateBreadcrumb() {
     const partEl = document.createElement("span");
     partEl.className = "breadcrumb-item";
     partEl.textContent = part;
+    partEl.draggable = true;
     partEl.addEventListener("click", () => navigateToBreadcrumb(partPath));
+    partEl.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", partPath);
+      e.dataTransfer.setData("x-dir-path", partPath);
+      e.dataTransfer.effectAllowed = "copyMove";
+    });
     breadcrumb.appendChild(partEl);
   });
 
@@ -2554,6 +2608,23 @@ function renderSidebar() {
       e.preventDefault();
       sidebar.classList.remove("drag-over");
 
+      // Breadcrumb drags use x-dir-path
+      const dirPath = e.dataTransfer.getData("x-dir-path");
+      if (dirPath) {
+        const shortcuts = getSidebarShortcuts(state.host);
+        if (!shortcuts.some((s) => s.path === dirPath)) {
+          shortcuts.push({
+            path: dirPath,
+            name: dirPath.split("/").pop() || "/",
+          });
+          saveSidebarShortcuts(state.host, shortcuts);
+          renderSidebar();
+          showNotification("Added shortcut", "success");
+        }
+        return;
+      }
+
+      // Column entry drags use JSON array in text/plain
       let paths;
       try {
         const raw = JSON.parse(e.dataTransfer.getData("text/plain"));
