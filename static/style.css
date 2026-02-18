@@ -583,7 +583,10 @@ body {
   letter-spacing: 0.05em;
   color: var(--text-muted);
   padding: 6px 12px 2px;
+  position: sticky;
+  top: 0;
   background: var(--bg-primary);
+  z-index: 1;
 }
 
 .column-section-header:not(:first-child) {
