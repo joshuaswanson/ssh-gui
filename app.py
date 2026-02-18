@@ -610,29 +610,28 @@ def git_authors():
     if not repo_root:
         return jsonify({"authors": {}})
 
-    # Get the first author for each file using git log
-    # Uses --name-only to get filenames and --diff-filter=A for initial commits
-    cmd = (
-        f"cd {quoted} && "
-        f"git log --diff-filter=A --format='%H %an' --name-only -- . 2>/dev/null"
-    )
-    _, stdout, _ = ssh_state["client"].exec_command(cmd)
+    # Get author for each file using the same approach as single-file git-info
+    # (git log --diff-filter=A --follow per file, batched in one SSH command)
+    names = request.json.get("names", [])
+    if not names:
+        return jsonify({"authors": {}})
+
+    parts = []
+    for n in names:
+        nq = shlex.quote(n)
+        parts.append(
+            f"a=$(git log --diff-filter=A --follow --format='%an' -- {nq} 2>/dev/null | tail -1);"
+            f' [ -n "$a" ] && printf "%s\\t%s\\n" {nq} "$a"'
+        )
+    cmd = f"cd {quoted} && " + "; ".join(parts)
+    _, stdout, _ = ssh_state["client"].exec_command(cmd, timeout=15)
     output = stdout.read().decode()
 
     authors = {}
-    current_author = None
-    for line in output.split("\n"):
-        line = line.strip()
-        if not line:
-            current_author = None
-            continue
-        # Lines with a space and 40-char hash prefix are commit lines
-        if " " in line and len(line.split(" ", 1)[0]) == 40:
-            current_author = line.split(" ", 1)[1]
-        elif current_author and "/" not in line:
-            # Plain filename (no subdirectory) -- first occurrence wins
-            if line not in authors:
-                authors[line] = current_author
+    for line in output.strip().split("\n"):
+        if "\t" in line:
+            name, author = line.split("\t", 1)
+            authors[name] = author
 
     return jsonify({"authors": authors})
 

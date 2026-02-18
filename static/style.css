@@ -576,6 +576,20 @@ body {
   background: var(--accent);
 }
 
+.column-section-header {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 6px 12px 2px;
+  background: var(--bg-primary);
+}
+
+.column-section-header:not(:first-child) {
+  padding-top: 10px;
+}
+
 .column-entry {
   display: flex;
   align-items: center;
