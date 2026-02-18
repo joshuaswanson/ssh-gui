@@ -88,6 +88,7 @@ body {
   justify-content: center;
   height: 100%;
   background: var(--bg-primary);
+  position: relative;
 }
 
 .connect-container {
@@ -148,6 +149,21 @@ body {
   color: var(--text-secondary);
   font-size: 14px;
   margin-top: 8px;
+}
+
+.coffee-link {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-decoration: none;
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.coffee-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 /* Saved hosts */
@@ -1160,7 +1176,6 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex: 1;
   min-width: 0;
   direction: rtl;
   text-align: left;
@@ -1198,6 +1213,7 @@ body {
   border-radius: 4px;
   flex-shrink: 0;
   white-space: nowrap;
+  margin-left: auto;
 }
 
 /* ── Sidebar ──────────────────────────────────────────────────────── */
