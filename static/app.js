@@ -2544,7 +2544,11 @@ function seedSidebarIfNew() {
   // Only seed if this host has never had shortcuts set (null, not "[]")
   if (localStorage.getItem(key) === null) {
     const homeName = "~" + (state.homeDir.split("/").pop() || "");
-    saveSidebarShortcuts(state.host, [{ path: state.homeDir, name: homeName }]);
+    saveSidebarShortcuts(state.host, [
+      { path: "/", name: "/" },
+      { path: state.homeDir, name: homeName },
+      { path: "/data", name: "data" },
+    ]);
   }
 }
 
