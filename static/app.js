@@ -570,6 +570,7 @@ async function navigateTo(path) {
     state.focusedColumn = 0;
     renderColumns();
     updateBreadcrumb();
+    renderSidebar();
     fetchDirSizes(0);
     fetchGitBranch(data.path);
     if (state.sortMode === "creator") fetchColumnAuthors();
@@ -629,8 +630,9 @@ async function selectEntry(colIndex, entry, opts = {}) {
     const newPath =
       currentPath === "/" ? "/" + entry.name : currentPath + "/" + entry.name;
 
-    // Render immediately to show selection before fetch completes
+    // Show selection and a loading column immediately
     state.focusedColumn = colIndex;
+    state.columns.push({ path: newPath, loading: true });
     renderColumns();
 
     try {
@@ -900,6 +902,22 @@ function renderColumns() {
 
   state.columns.forEach((column, colIndex) => {
     const colEl = document.createElement("div");
+
+    // Loading column
+    if (column.loading) {
+      colEl.className = "column";
+      colEl.innerHTML =
+        '<div class="column-loading"><div class="spinner"></div></div>';
+      if (column.width) {
+        colEl.style.minWidth = column.width + "px";
+        colEl.style.width = column.width + "px";
+      }
+      container.appendChild(colEl);
+      if (colIndex < state.columns.length - 1) {
+        container.appendChild(createColumnResizeHandle(colIndex, colEl));
+      }
+      return;
+    }
 
     // File preview column
     if (column.filePreview) {
@@ -2036,7 +2054,7 @@ function showColumnContextMenu(x, y, dirPath) {
 
   const newFolderItem = document.createElement("div");
   newFolderItem.className = "context-menu-item";
-  newFolderItem.textContent = "New Folder";
+  newFolderItem.innerHTML = `<span class="ctx-icon">+</span>New Folder`;
   newFolderItem.addEventListener("click", () => {
     hideContextMenu();
     createNewFolder(dirPath);
@@ -2098,19 +2116,28 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
   const items = [];
 
   if (isMulti) {
-    // Multi-selection: only show actions that make sense for multiple items
     items.push({
+      icon: "\u2421",
       label: `Delete ${selectedCount} items`,
       action: () => confirmDeleteMulti(colIndex),
       danger: true,
     });
   } else {
     items.push(
-      { label: "Copy Name", action: () => copyToClipboard(entry.name) },
-      { label: "Copy Path", action: () => copyToClipboard(fullPath) },
+      {
+        icon: "\u2398",
+        label: "Copy Name",
+        action: () => copyToClipboard(entry.name),
+      },
+      {
+        icon: "\u2397",
+        label: "Copy Path",
+        action: () => copyToClipboard(fullPath),
+      },
     );
     if (!entry.is_dir) {
       items.push({
+        icon: "\u2913",
         label: "Download",
         action: () => downloadFile(fullPath),
       });
@@ -2118,6 +2145,7 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
     items.push(
       { separator: true },
       {
+        icon: isFavorited ? "\u2606" : "\u2605",
         label: isFavorited ? "Remove from Favorites" : "Add to Favorites",
         action: () => {
           const current = getSidebarShortcuts(state.host);
@@ -2131,9 +2159,19 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
           renderSidebar();
         },
       },
-      { label: "Rename", action: () => startRename(colIndex, entry.name) },
+      {
+        icon: "\u29C9",
+        label: "Duplicate",
+        action: () => duplicateEntry(colIndex, entry, fullPath),
+      },
+      {
+        icon: "\u270E",
+        label: "Rename",
+        action: () => startRename(colIndex, entry.name),
+      },
       { separator: true },
       {
+        icon: "\u2421",
         label: "Delete",
         action: () => confirmDelete(colIndex, entry, fullPath),
         danger: true,
@@ -2150,7 +2188,11 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
     }
     const el = document.createElement("div");
     el.className = "context-menu-item" + (item.danger ? " danger" : "");
-    el.textContent = item.label;
+    if (item.icon) {
+      el.innerHTML = `<span class="ctx-icon">${item.icon}</span>${escapeHtml(item.label)}`;
+    } else {
+      el.textContent = item.label;
+    }
     el.addEventListener("click", () => {
       hideContextMenu();
       item.action();
@@ -2206,6 +2248,25 @@ function handleContextMenuKey(e) {
     e.preventDefault();
     hideContextMenu();
   }
+}
+
+async function duplicateEntry(colIndex, entry, fullPath) {
+  try {
+    const resp = await fetch("/api/duplicate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: fullPath, is_dir: entry.is_dir }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showNotification(data.error, "error");
+    } else {
+      showNotification("Duplicated " + entry.name, "success");
+    }
+  } catch (e) {
+    showNotification("Duplicate failed: " + e.message, "error");
+  }
+  await refreshColumns();
 }
 
 async function confirmDelete(colIndex, entry, fullPath) {
@@ -2436,22 +2497,21 @@ function setupResizeHandle() {
       tmuxBar && !tmuxBar.classList.contains("hidden")
         ? tmuxBar.offsetHeight
         : 0;
-    const availableHeight =
-      rect.height -
-      toolbarHeight -
-      handleHeight -
-      pathBarHeight -
-      tmuxBarHeight;
-    const mouseY = e.clientY - rect.top - toolbarHeight - pathBarHeight;
+    // Fixed elements above the handle: toolbar + pathBar
+    // Fixed elements at/below the handle: handle + tmuxBar
+    const fixedAbove = toolbarHeight + pathBarHeight;
+    const fixedBelow = handleHeight + tmuxBarHeight;
+    const availableHeight = rect.height - fixedAbove - fixedBelow;
 
-    const browserFraction = Math.max(
-      0.15,
-      Math.min(0.85, mouseY / availableHeight),
+    const mouseFromTop = e.clientY - rect.top;
+    const browserHeight = Math.max(
+      availableHeight * 0.15,
+      Math.min(availableHeight * 0.85, mouseFromTop - fixedAbove),
     );
-    const terminalFraction = 1 - browserFraction;
+    const terminalHeight = availableHeight - browserHeight;
 
-    browserContainer.style.flex = `0 0 ${browserFraction * 100}%`;
-    terminalContainer.style.flex = `0 0 ${terminalFraction * 100}%`;
+    browserContainer.style.flex = `0 0 ${browserHeight}px`;
+    terminalContainer.style.flex = `0 0 ${terminalHeight}px`;
 
     if (state.fitAddon) {
       state.fitAddon.fit();
@@ -2574,13 +2634,23 @@ function renderSidebar() {
     const name = shortcut.name || shortcut.path.split("/").pop() || "/";
     item.innerHTML = `<span class="sidebar-icon">${FOLDER_ICON}</span><span class="sidebar-name">${escapeHtml(name)}</span>`;
     item.title = shortcut.path;
+    // Highlight if current browsing path starts with this shortcut
+    const rootPath = state.columns.length > 0 ? state.columns[0].path : "";
+    if (
+      rootPath === shortcut.path ||
+      rootPath.startsWith(shortcut.path + "/")
+    ) {
+      item.classList.add("active");
+    }
+
     item.addEventListener("click", () => navigateTo(shortcut.path));
     item.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       showSidebarContextMenu(e.clientX, e.clientY, idx);
     });
 
-    // Drag out to remove
+    // Drag to reorder or drag out to remove
+    item.dataset.idx = idx;
     item.addEventListener("dragstart", (e) => {
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData(
@@ -2588,9 +2658,48 @@ function renderSidebar() {
         JSON.stringify({ sidebarRemove: idx }),
       );
       item.classList.add("dragging");
+      sidebar._dragIdx = idx;
+    });
+    item.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      // Show drop indicator
+      const rect = item.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      item.classList.toggle("drop-above", e.clientY < midY);
+      item.classList.toggle("drop-below", e.clientY >= midY);
+    });
+    item.addEventListener("dragleave", () => {
+      item.classList.remove("drop-above", "drop-below");
+    });
+    item.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      item.classList.remove("drop-above", "drop-below");
+      const fromIdx = sidebar._dragIdx;
+      if (fromIdx === undefined || fromIdx === idx) return;
+      const rect = item.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      let toIdx = e.clientY < midY ? idx : idx + 1;
+      // Adjust for removal shift
+      if (fromIdx < toIdx) toIdx--;
+      if (fromIdx === toIdx) return;
+      const current = getSidebarShortcuts(state.host);
+      const [moved] = current.splice(fromIdx, 1);
+      current.splice(toIdx, 0, moved);
+      saveSidebarShortcuts(state.host, current);
+      sidebar._dragIdx = undefined;
+      sidebar._reorderDone = true;
+      renderSidebar();
     });
     item.addEventListener("dragend", (e) => {
       item.classList.remove("dragging");
+      sidebar._dragIdx = undefined;
+      // If a reorder just happened, don't remove
+      if (sidebar._reorderDone) {
+        sidebar._reorderDone = false;
+        return;
+      }
       // If dropped outside the sidebar, remove it
       const rect = sidebar.getBoundingClientRect();
       if (
@@ -2651,8 +2760,11 @@ function renderSidebar() {
       let paths;
       try {
         const raw = JSON.parse(e.dataTransfer.getData("text/plain"));
-        // Ignore sidebar-item drags (those are handled by dragend)
-        if (raw && raw.sidebarRemove !== undefined) return;
+        // Sidebar-item dropped within sidebar -- not a removal
+        if (raw && raw.sidebarRemove !== undefined) {
+          sidebar._reorderDone = true;
+          return;
+        }
         paths = raw;
       } catch {
         return;
@@ -2698,7 +2810,7 @@ function showSidebarContextMenu(x, y, shortcutIndex) {
 
   const removeItem = document.createElement("div");
   removeItem.className = "context-menu-item danger";
-  removeItem.textContent = "Remove from Favorites";
+  removeItem.innerHTML = `<span class="ctx-icon">\u2606</span>Remove from Favorites`;
   removeItem.addEventListener("mousedown", (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -2861,7 +2973,7 @@ function showTmuxContextMenu(x, y, win) {
 
   const renameItem = document.createElement("div");
   renameItem.className = "context-menu-item";
-  renameItem.textContent = "Rename";
+  renameItem.innerHTML = `<span class="ctx-icon">\u270E</span>Rename`;
   renameItem.addEventListener("click", () => {
     hideContextMenu();
     tmuxRenameWindow(win.index);
@@ -2874,7 +2986,7 @@ function showTmuxContextMenu(x, y, win) {
 
   const closeItem = document.createElement("div");
   closeItem.className = "context-menu-item danger";
-  closeItem.textContent = "Close Window";
+  closeItem.innerHTML = `<span class="ctx-icon">\u2715</span>Close Window`;
   closeItem.addEventListener("click", () => {
     hideContextMenu();
     tmuxKillWindow(win.index);
