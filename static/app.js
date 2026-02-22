@@ -1653,6 +1653,11 @@ function handleKeyNavigation(e) {
     }
     case "ArrowRight": {
       e.preventDefault();
+      // Nothing selected -- select first entry so user can start navigating
+      if (column.selected.size === 0 && entries.length > 0) {
+        selectEntry(fc, entries[0]).then(() => focusColumns());
+        break;
+      }
       if (state.columns.length > fc + 1) {
         // Move focus into the next column
         state.focusedColumn = fc + 1;
@@ -2657,7 +2662,9 @@ function renderSidebar() {
       item.classList.add("active");
     }
 
-    item.addEventListener("click", () => navigateTo(shortcut.path));
+    item.addEventListener("click", () => {
+      navigateTo(shortcut.path).then(() => focusColumns());
+    });
     item.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       showSidebarContextMenu(e.clientX, e.clientY, idx);
