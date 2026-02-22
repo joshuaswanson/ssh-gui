@@ -429,6 +429,52 @@ def move_entry():
         return jsonify({"error": str(e)}), 400
 
 
+@app.route("/api/duplicate", methods=["POST"])
+def duplicate_entry():
+    if not ssh_state["sftp"] or not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    path = data.get("path", "")
+    is_dir = data.get("is_dir", False)
+
+    if not path:
+        return jsonify({"error": "path is required"}), 400
+
+    try:
+        parent = posixpath.dirname(path)
+        basename = posixpath.basename(path)
+
+        # Generate a unique copy name
+        name, ext = posixpath.splitext(basename) if not is_dir else (basename, "")
+        copy_name = f"{name} copy{ext}"
+        counter = 2
+        while True:
+            copy_path = posixpath.join(parent, copy_name)
+            try:
+                ssh_state["sftp"].stat(copy_path)
+                copy_name = f"{name} copy {counter}{ext}"
+                counter += 1
+            except FileNotFoundError:
+                break
+
+        escaped_src = shlex.quote(path)
+        escaped_dest = shlex.quote(copy_path)
+        if is_dir:
+            cmd = f"cp -r {escaped_src} {escaped_dest}"
+        else:
+            cmd = f"cp {escaped_src} {escaped_dest}"
+        _, stdout, stderr = ssh_state["client"].exec_command(cmd)
+        exit_code = stdout.channel.recv_exit_status()
+        if exit_code != 0:
+            err = stderr.read().decode().strip()
+            return jsonify({"error": err or "Copy failed"}), 400
+
+        return jsonify({"status": "ok", "new_path": copy_path})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
 @app.route("/api/mkdir", methods=["POST"])
 def mkdir_entry():
     if not ssh_state["sftp"]:
