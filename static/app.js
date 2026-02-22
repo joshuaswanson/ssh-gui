@@ -124,6 +124,20 @@ const COPY_ICON = `<svg width="12" height="12" viewBox="0 0 16 16" fill="current
   <path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25ZM5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/>
 </svg>`;
 
+// Context menu icons (SF Symbols style)
+const CTX = {
+  copyName: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 1.5h5.586a1 1 0 0 1 .707.293l2.414 2.414a1 1 0 0 1 .293.707V11.5a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 11.5v-8.5A1.5 1.5 0 0 1 4 1.5zm0 1a.5.5 0 0 0-.5.5v8.5a.5.5 0 0 0 .5.5h7.5a.5.5 0 0 0 .5-.5V5h-2a1 1 0 0 1-1-1V2.5H4z"/></svg>`,
+  copyPath: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4.715 6.542 3.343 7.914a3 3 0 1 0 4.243 4.243l1.828-1.829A3 3 0 0 0 8.586 5.5L8 6.086a1 1 0 0 0-.154.199 2 2 0 0 1 .861 3.337L6.88 11.45a2 2 0 1 1-2.83-2.83l.793-.792a4 4 0 0 1-.128-1.287z"/><path d="M6.586 4.672A3 3 0 0 0 7.414 9.5l.775-.776a2 2 0 0 1-.896-3.346L9.12 3.55a2 2 0 1 1 2.83 2.83l-.793.792c.112.42.155.855.128 1.287l1.372-1.372a3 3 0 1 0-4.243-4.243z"/></svg>`,
+  download: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/></svg>`,
+  starFill: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3.612 15.443c-.386.198-.824-.149-.746-.592l.83-4.73L.173 6.765c-.329-.314-.158-.888.283-.95l4.898-.696L7.538.792c.197-.39.73-.39.927 0l2.184 4.327 4.898.696c.441.062.612.636.282.95l-3.522 3.356.83 4.73c.078.443-.36.79-.746.592L8 13.187l-4.389 2.256z"/></svg>`,
+  starEmpty: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2.866 14.85c-.078.444.36.791.746.593l4.39-2.256 4.389 2.256c.386.198.824-.149.746-.592l-.83-4.73 3.522-3.356c.33-.314.16-.888-.282-.95l-4.898-.696L8.465.792a.513.513 0 0 0-.927 0L5.354 5.12l-4.898.696c-.441.062-.612.636-.283.95l3.523 3.356-.83 4.73zm4.905-2.767L8 12.202l3.229 1.66-.616-3.519 2.614-2.49-3.606-.513L8 4.275 6.394 7.34l-3.606.513 2.614 2.49-.616 3.519z"/></svg>`,
+  duplicate: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25ZM5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/></svg>`,
+  rename: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293z"/></svg>`,
+  trash: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/><path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/></svg>`,
+  newFolder: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M.5 3l.04.87a2 2 0 0 0-.342 1.311l.637 7A2 2 0 0 0 2.826 14H9v-1H2.826a1 1 0 0 1-.995-.91l-.637-7A1 1 0 0 1 2.19 4h11.62a1 1 0 0 1 .996 1.09L14.54 8h1.005l.256-2.819A2 2 0 0 0 13.81 3H9.828a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 6.172 1H2.5a2 2 0 0 0-2 2m5.672-1H2.5a1 1 0 0 0-1 1l.03.4a2 2 0 0 1 .67-.4H6l-.328-.329A1 1 0 0 0 4.172 2z"/><path d="M13.5 10a.5.5 0 0 1 .5.5V12h1.5a.5.5 0 0 1 0 1H14v1.5a.5.5 0 0 1-1 0V13h-1.5a.5.5 0 0 1 0-1H13v-1.5a.5.5 0 0 1 .5-.5"/></svg>`,
+  xmark: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z"/></svg>`,
+};
+
 // ── Initialization ───────────────────────────────────────────────────
 
 document.addEventListener("DOMContentLoaded", init);
@@ -2054,7 +2068,7 @@ function showColumnContextMenu(x, y, dirPath) {
 
   const newFolderItem = document.createElement("div");
   newFolderItem.className = "context-menu-item";
-  newFolderItem.innerHTML = `<span class="ctx-icon">+</span>New Folder`;
+  newFolderItem.innerHTML = `<span class="ctx-icon">${CTX.newFolder}</span><span>New Folder</span>`;
   newFolderItem.addEventListener("click", () => {
     hideContextMenu();
     createNewFolder(dirPath);
@@ -2117,7 +2131,7 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
 
   if (isMulti) {
     items.push({
-      icon: "\u2421",
+      icon: CTX.trash,
       label: `Delete ${selectedCount} items`,
       action: () => confirmDeleteMulti(colIndex),
       danger: true,
@@ -2125,19 +2139,19 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
   } else {
     items.push(
       {
-        icon: "\u2398",
+        icon: CTX.copyName,
         label: "Copy Name",
         action: () => copyToClipboard(entry.name),
       },
       {
-        icon: "\u2397",
+        icon: CTX.copyPath,
         label: "Copy Path",
         action: () => copyToClipboard(fullPath),
       },
     );
     if (!entry.is_dir) {
       items.push({
-        icon: "\u2913",
+        icon: CTX.download,
         label: "Download",
         action: () => downloadFile(fullPath),
       });
@@ -2145,7 +2159,7 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
     items.push(
       { separator: true },
       {
-        icon: isFavorited ? "\u2606" : "\u2605",
+        icon: isFavorited ? CTX.starEmpty : CTX.starFill,
         label: isFavorited ? "Remove from Favorites" : "Add to Favorites",
         action: () => {
           const current = getSidebarShortcuts(state.host);
@@ -2160,18 +2174,18 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
         },
       },
       {
-        icon: "\u29C9",
+        icon: CTX.duplicate,
         label: "Duplicate",
         action: () => duplicateEntry(colIndex, entry, fullPath),
       },
       {
-        icon: "\u270E",
+        icon: CTX.rename,
         label: "Rename",
         action: () => startRename(colIndex, entry.name),
       },
       { separator: true },
       {
-        icon: "\u2421",
+        icon: CTX.trash,
         label: "Delete",
         action: () => confirmDelete(colIndex, entry, fullPath),
         danger: true,
@@ -2189,7 +2203,7 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
     const el = document.createElement("div");
     el.className = "context-menu-item" + (item.danger ? " danger" : "");
     if (item.icon) {
-      el.innerHTML = `<span class="ctx-icon">${item.icon}</span>${escapeHtml(item.label)}`;
+      el.innerHTML = `<span class="ctx-icon">${item.icon}</span><span>${escapeHtml(item.label)}</span>`;
     } else {
       el.textContent = item.label;
     }
@@ -2810,7 +2824,7 @@ function showSidebarContextMenu(x, y, shortcutIndex) {
 
   const removeItem = document.createElement("div");
   removeItem.className = "context-menu-item danger";
-  removeItem.innerHTML = `<span class="ctx-icon">\u2606</span>Remove from Favorites`;
+  removeItem.innerHTML = `<span class="ctx-icon">${CTX.starEmpty}</span><span>Remove from Favorites</span>`;
   removeItem.addEventListener("mousedown", (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -2973,7 +2987,7 @@ function showTmuxContextMenu(x, y, win) {
 
   const renameItem = document.createElement("div");
   renameItem.className = "context-menu-item";
-  renameItem.innerHTML = `<span class="ctx-icon">\u270E</span>Rename`;
+  renameItem.innerHTML = `<span class="ctx-icon">${CTX.rename}</span><span>Rename</span>`;
   renameItem.addEventListener("click", () => {
     hideContextMenu();
     tmuxRenameWindow(win.index);
@@ -2986,7 +3000,7 @@ function showTmuxContextMenu(x, y, win) {
 
   const closeItem = document.createElement("div");
   closeItem.className = "context-menu-item danger";
-  closeItem.innerHTML = `<span class="ctx-icon">\u2715</span>Close Window`;
+  closeItem.innerHTML = `<span class="ctx-icon">${CTX.xmark}</span><span>Close Window</span>`;
   closeItem.addEventListener("click", () => {
     hideContextMenu();
     tmuxKillWindow(win.index);
