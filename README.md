@@ -44,3 +44,5 @@ On macOS, double-click `start.command` to launch the server and open Safari auto
 ## Support
 
 If you find this useful, [buy me a coffee](https://buymeacoffee.com/swanson).
+
+<img src="assets/bmc_qr.png" alt="Buy Me a Coffee QR" width="200">
