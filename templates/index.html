@@ -119,6 +119,34 @@
     <div id="main-screen" class="hidden">
       <div id="toolbar">
         <div class="toolbar-left">
+          <button
+            class="btn btn-icon nav-btn"
+            id="nav-back"
+            onclick="navigateBack()"
+            title="Back (Cmd+[)"
+            disabled
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path
+                fill-rule="evenodd"
+                d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"
+              />
+            </svg>
+          </button>
+          <button
+            class="btn btn-icon nav-btn"
+            id="nav-forward"
+            onclick="navigateForward()"
+            title="Forward (Cmd+])"
+            disabled
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path
+                fill-rule="evenodd"
+                d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"
+              />
+            </svg>
+          </button>
           <button class="btn btn-icon" onclick="navigateHome()" title="Home">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <path
@@ -220,6 +248,9 @@
       </div>
       <div id="package-panel" class="package-panel hidden"></div>
     </div>
+
+    <!-- Hidden upload input -->
+    <input type="file" id="upload-input" multiple style="display: none" />
 
     <!-- Notification -->
     <div id="notification" class="notification hidden"></div>

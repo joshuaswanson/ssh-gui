@@ -25,6 +25,11 @@ const state = {
     pollInterval: null,
   },
   gitBranch: null,
+  history: [],
+  historyIndex: -1,
+  historyPaused: false,
+  search: { active: false, query: "" },
+  editing: { active: false, path: null, originalContent: null },
   packagePanel: {
     open: false,
     packages: [],
@@ -136,6 +141,7 @@ const CTX = {
   trash: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/><path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/></svg>`,
   newFolder: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M.5 3l.04.87a2 2 0 0 0-.342 1.311l.637 7A2 2 0 0 0 2.826 14H9v-1H2.826a1 1 0 0 1-.995-.91l-.637-7A1 1 0 0 1 2.19 4h11.62a1 1 0 0 1 .996 1.09L14.54 8h1.005l.256-2.819A2 2 0 0 0 13.81 3H9.828a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 6.172 1H2.5a2 2 0 0 0-2 2m5.672-1H2.5a1 1 0 0 0-1 1l.03.4a2 2 0 0 1 .67-.4H6l-.328-.329A1 1 0 0 0 4.172 2z"/><path d="M13.5 10a.5.5 0 0 1 .5.5V12h1.5a.5.5 0 0 1 0 1H14v1.5a.5.5 0 0 1-1 0V13h-1.5a.5.5 0 0 1 0-1H13v-1.5a.5.5 0 0 1 .5-.5"/></svg>`,
   xmark: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z"/></svg>`,
+  upload: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/><path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V10.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708z"/></svg>`,
 };
 
 // ── Initialization ───────────────────────────────────────────────────
@@ -147,6 +153,7 @@ async function init() {
   await loadSSHConfigs();
   setupResizeHandle();
   setupKeyboardNavigation();
+  setupGlobalShortcuts();
   window.addEventListener("resize", handleWindowResize);
 }
 
@@ -582,8 +589,10 @@ async function navigateTo(path) {
       },
     ];
     state.focusedColumn = 0;
+    if (!state.historyPaused) pushHistory(data.path);
     renderColumns();
     updateBreadcrumb();
+    updateNavButtons();
     renderSidebar();
     fetchDirSizes(0);
     fetchGitBranch(data.path);
@@ -790,6 +799,12 @@ function getVisibleEntries(column) {
     (e) => state.showHidden || !e.name.startsWith("."),
   );
 
+  // Apply search filter
+  if (state.search.active && state.search.query) {
+    const q = state.search.query.toLowerCase();
+    entries = entries.filter((e) => e.name.toLowerCase().includes(q));
+  }
+
   entries = sortEntries(entries, state.sortMode, state.sortAsc);
   return entries;
 }
@@ -956,37 +971,55 @@ function renderColumns() {
         bodyHtml =
           '<div class="file-preview-message">Binary file -- cannot preview</div>';
       } else if (preview.content != null) {
-        const lines = preview.content.split("\n");
-        const lineNums = lines
-          .map((_, i) => `<span>${i + 1}</span>`)
-          .join("\n");
-        const code = escapeHtml(preview.content);
-        const wrapClass = state.previewWrap ? " wrapped" : "";
-        bodyHtml = `<div class="file-preview-code"><div class="file-preview-lines">${lineNums}</div><pre class="file-preview-content${wrapClass}">${code}</pre></div>`;
-        if (preview.truncated) {
-          bodyHtml +=
-            '<div class="file-preview-message">Truncated -- first 64KB shown</div>';
+        const isEditing =
+          state.editing.active && state.editing.path === preview.path;
+        if (isEditing) {
+          bodyHtml = `<textarea class="file-editor-textarea" id="editor-textarea">${escapeHtml(state.editing.originalContent)}</textarea>`;
+        } else {
+          const lines = preview.content.split("\n");
+          const lineNums = lines
+            .map((_, i) => `<span>${i + 1}</span>`)
+            .join("\n");
+          const code = escapeHtml(preview.content);
+          const wrapClass = state.previewWrap ? " wrapped" : "";
+          bodyHtml = `<div class="file-preview-code"><div class="file-preview-lines">${lineNums}</div><pre class="file-preview-content${wrapClass}">${code}</pre></div>`;
+          if (preview.truncated) {
+            bodyHtml +=
+              '<div class="file-preview-message">Truncated -- first 64KB shown</div>';
+          }
         }
       } else {
         bodyHtml =
           '<div class="file-preview-message">No preview available</div>';
       }
 
+      const isEditing =
+        state.editing.active && state.editing.path === preview.path;
+      const isTextFile = preview.content != null && !preview.truncated;
       const wrapBtnClass = state.previewWrap ? " active" : "";
       const wrapTitle = state.previewWrap
         ? "Scroll horizontally"
         : "Wrap lines";
+
+      let actionsHtml;
+      if (isEditing) {
+        actionsHtml = `
+          <button class="btn btn-save" onclick="saveEditedFile()">Save</button>
+          <button class="btn btn-secondary btn-sm" onclick="cancelEditing()">Cancel</button>`;
+      } else {
+        actionsHtml = `
+          <button class="btn btn-icon preview-wrap-btn${wrapBtnClass}" onclick="togglePreviewWrap()" title="${wrapTitle}">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M1.75 2a.75.75 0 0 0 0 1.5h12.5a.75.75 0 0 0 0-1.5H1.75zm0 5a.75.75 0 0 0 0 1.5h7.5c.69 0 1.25.56 1.25 1.25s-.56 1.25-1.25 1.25H8.5v-.75a.75.75 0 0 0-1.28-.53l-1.5 1.5a.75.75 0 0 0 0 1.06l1.5 1.5A.75.75 0 0 0 8.5 13v-.75h.75a2.75 2.75 0 0 0 0-5.5h-7.5zM1.75 14a.75.75 0 0 0 0 1.5h12.5a.75.75 0 0 0 0-1.5H1.75z"/>
+              </svg>
+          </button>
+          ${isTextFile ? '<button class="btn btn-sm btn-edit" onclick="startEditing()">Edit</button>' : '<span class="file-preview-readonly">Read-only</span>'}`;
+      }
+
       colEl.innerHTML = `
                 <div class="file-preview-header">
                     <span class="file-preview-title">${escapeHtml(preview.name)}</span>
-                    <div class="file-preview-actions">
-                        <button class="btn btn-icon preview-wrap-btn${wrapBtnClass}" onclick="togglePreviewWrap()" title="${wrapTitle}">
-                            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-                                <path d="M1.75 2a.75.75 0 0 0 0 1.5h12.5a.75.75 0 0 0 0-1.5H1.75zm0 5a.75.75 0 0 0 0 1.5h7.5c.69 0 1.25.56 1.25 1.25s-.56 1.25-1.25 1.25H8.5v-.75a.75.75 0 0 0-1.28-.53l-1.5 1.5a.75.75 0 0 0 0 1.06l1.5 1.5A.75.75 0 0 0 8.5 13v-.75h.75a2.75 2.75 0 0 0 0-5.5h-7.5zM1.75 14a.75.75 0 0 0 0 1.5h12.5a.75.75 0 0 0 0-1.5H1.75z"/>
-                            </svg>
-                        </button>
-                        <span class="file-preview-readonly">Read-only</span>
-                    </div>
+                    <div class="file-preview-actions">${actionsHtml}</div>
                 </div>
                 ${bodyHtml}
             `;
@@ -1352,6 +1385,27 @@ function createColumnResizeHandle(colIndex, colEl) {
 }
 
 async function handleDrop(e, destDir) {
+  // Handle file uploads from OS
+  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    const hasPlainText = e.dataTransfer.types.includes("text/plain");
+    let isInternal = false;
+    if (hasPlainText) {
+      try {
+        const parsed = JSON.parse(e.dataTransfer.getData("text/plain"));
+        if (
+          Array.isArray(parsed) ||
+          (parsed && parsed.sidebarRemove !== undefined)
+        ) {
+          isInternal = true;
+        }
+      } catch {}
+    }
+    if (!isInternal) {
+      await handleFileUpload(e.dataTransfer.files, destDir);
+      return;
+    }
+  }
+
   let paths;
   try {
     paths = JSON.parse(e.dataTransfer.getData("text/plain"));
@@ -2080,6 +2134,15 @@ function showColumnContextMenu(x, y, dirPath) {
   });
   menu.appendChild(newFolderItem);
 
+  const uploadItem = document.createElement("div");
+  uploadItem.className = "context-menu-item";
+  uploadItem.innerHTML = `<span class="ctx-icon">${CTX.upload}</span><span>Upload Files</span>`;
+  uploadItem.addEventListener("click", () => {
+    hideContextMenu();
+    triggerUpload(dirPath);
+  });
+  menu.appendChild(uploadItem);
+
   document.body.appendChild(menu);
 
   const rect = menu.getBoundingClientRect();
@@ -2451,6 +2514,284 @@ function showScreen(name) {
   document
     .getElementById("main-screen")
     .classList.toggle("hidden", name !== "main");
+}
+
+// ── Back/Forward Navigation ───────────────────────────────────────────
+
+function pushHistory(path) {
+  // Truncate any forward history
+  if (state.historyIndex < state.history.length - 1) {
+    state.history = state.history.slice(0, state.historyIndex + 1);
+  }
+  state.history.push(path);
+  if (state.history.length > 50) state.history.shift();
+  state.historyIndex = state.history.length - 1;
+}
+
+function navigateBack() {
+  if (state.historyIndex <= 0) return;
+  state.historyIndex--;
+  state.historyPaused = true;
+  navigateTo(state.history[state.historyIndex]).then(() => {
+    state.historyPaused = false;
+    updateNavButtons();
+  });
+}
+
+function navigateForward() {
+  if (state.historyIndex >= state.history.length - 1) return;
+  state.historyIndex++;
+  state.historyPaused = true;
+  navigateTo(state.history[state.historyIndex]).then(() => {
+    state.historyPaused = false;
+    updateNavButtons();
+  });
+}
+
+function updateNavButtons() {
+  const back = document.getElementById("nav-back");
+  const fwd = document.getElementById("nav-forward");
+  if (back) back.disabled = state.historyIndex <= 0;
+  if (fwd) fwd.disabled = state.historyIndex >= state.history.length - 1;
+}
+
+// ── Search / Filter ──────────────────────────────────────────────────
+
+function toggleSearchBar() {
+  state.search.active = !state.search.active;
+  if (!state.search.active) {
+    state.search.query = "";
+    renderColumns();
+  }
+  renderSearchBar();
+}
+
+function renderSearchBar() {
+  let bar = document.getElementById("search-bar");
+  if (!state.search.active) {
+    if (bar) bar.remove();
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "search-bar";
+    bar.className = "search-bar";
+    const browserContainer = document.getElementById("browser-container");
+    browserContainer.parentNode.insertBefore(bar, browserContainer);
+  }
+  bar.innerHTML = `
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" opacity="0.5">
+      <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001q.044.06.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1 1 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0"/>
+    </svg>
+    <input id="search-input" type="text" placeholder="Filter files..." value="${escapeAttr(state.search.query)}" />
+    <button class="btn btn-icon search-close" onclick="toggleSearchBar()" title="Close (Esc)">
+      ${CTX.xmark}
+    </button>
+  `;
+  const input = bar.querySelector("#search-input");
+  input.addEventListener("input", (e) => {
+    state.search.query = e.target.value;
+    renderColumns();
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      toggleSearchBar();
+      focusColumns();
+    }
+    e.stopPropagation();
+  });
+  input.focus();
+}
+
+// ── File Upload ──────────────────────────────────────────────────────
+
+async function handleFileUpload(files, destDir) {
+  const formData = new FormData();
+  formData.append("dest_dir", destDir);
+  for (const file of files) {
+    formData.append("files", file);
+  }
+
+  showNotification(`Uploading ${files.length} file(s)...`, "info");
+
+  try {
+    const resp = await fetch("/api/upload", {
+      method: "POST",
+      body: formData,
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showNotification(data.error, "error");
+    } else {
+      const count = data.uploaded ? data.uploaded.length : 0;
+      showNotification(`Uploaded ${count} file(s)`, "success");
+      if (data.errors) {
+        showNotification(data.errors.join("; "), "error");
+      }
+    }
+  } catch (e) {
+    showNotification("Upload failed: " + e.message, "error");
+  }
+  await refreshColumns();
+}
+
+function triggerUpload(destDir) {
+  const input = document.getElementById("upload-input");
+  input.onchange = () => {
+    if (input.files.length > 0) {
+      handleFileUpload(input.files, destDir);
+    }
+    input.value = "";
+  };
+  input.click();
+}
+
+// ── Text Editor ──────────────────────────────────────────────────────
+
+function startEditing() {
+  const previewCol = state.columns.find(
+    (c) => c.filePreview && c.filePreview.content != null,
+  );
+  if (!previewCol) return;
+  state.editing = {
+    active: true,
+    path: previewCol.filePreview.path,
+    originalContent: previewCol.filePreview.content,
+  };
+  renderColumns();
+  const textarea = document.getElementById("editor-textarea");
+  if (textarea) textarea.focus();
+}
+
+async function saveEditedFile() {
+  const textarea = document.getElementById("editor-textarea");
+  if (!textarea || !state.editing.active) return;
+  const content = textarea.value;
+  const path = state.editing.path;
+
+  try {
+    const resp = await fetch("/api/save-file", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, content }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showNotification(data.error, "error");
+      return;
+    }
+    showNotification("File saved", "success");
+    state.editing = { active: false, path: null, originalContent: null };
+    // Invalidate preview cache and re-fetch
+    apiCache.invalidateUrl("/api/preview");
+    const previewCol = state.columns.find(
+      (c) => c.filePreview && c.filePreview.path === path,
+    );
+    if (previewCol) {
+      previewCol.filePreview.content = content;
+      previewCol.filePreview.loaded = true;
+    }
+    renderColumns();
+  } catch (e) {
+    showNotification("Save failed: " + e.message, "error");
+  }
+}
+
+function cancelEditing() {
+  state.editing = { active: false, path: null, originalContent: null };
+  renderColumns();
+}
+
+// ── Global Keyboard Shortcuts ────────────────────────────────────────
+
+function setupGlobalShortcuts() {
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (!state.connected) return;
+
+      // Don't intercept when typing in inputs (except specific shortcuts)
+      const tag = document.activeElement?.tagName;
+      const isInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      const isTerminal = document.activeElement?.closest("#terminal-container");
+
+      // Cmd+S -- save file (works even in textarea)
+      if (e.metaKey && e.key === "s") {
+        if (state.editing.active) {
+          e.preventDefault();
+          saveEditedFile();
+          return;
+        }
+      }
+
+      // Cmd+F -- search/filter
+      if (e.metaKey && e.key === "f") {
+        e.preventDefault();
+        toggleSearchBar();
+        return;
+      }
+
+      // Skip remaining shortcuts if in terminal or input
+      if (isTerminal || isInput) return;
+
+      // Cmd+[ -- back
+      if (e.metaKey && e.key === "[") {
+        e.preventDefault();
+        navigateBack();
+        return;
+      }
+
+      // Cmd+] -- forward
+      if (e.metaKey && e.key === "]") {
+        e.preventDefault();
+        navigateForward();
+        return;
+      }
+
+      // Cmd+Shift+N -- new folder
+      if (e.metaKey && e.shiftKey && (e.key === "N" || e.key === "n")) {
+        e.preventDefault();
+        const col = state.columns[state.focusedColumn];
+        if (col && col.path) createNewFolder(col.path);
+        return;
+      }
+
+      // Cmd+D -- duplicate
+      if (e.metaKey && e.key === "d") {
+        e.preventDefault();
+        const info = getSelectedEntryInfo();
+        if (info) duplicateEntry(info.colIndex, info.entry, info.fullPath);
+        return;
+      }
+
+      // Cmd+Backspace -- delete
+      if (e.metaKey && e.key === "Backspace") {
+        e.preventDefault();
+        const col = state.columns[state.focusedColumn];
+        if (col && col.selected.size > 1) {
+          confirmDeleteMulti(state.focusedColumn);
+        } else {
+          const info = getSelectedEntryInfo();
+          if (info) confirmDelete(info.colIndex, info.entry, info.fullPath);
+        }
+        return;
+      }
+    },
+    true,
+  ); // capture phase for Cmd+F
+}
+
+function getSelectedEntryInfo() {
+  const fc = state.focusedColumn;
+  const col = state.columns[fc];
+  if (!col || col.selected.size !== 1) return null;
+  const name = [...col.selected][0];
+  const entries = getVisibleEntries(col);
+  const entry = entries.find((e) => e.name === name);
+  if (!entry) return null;
+  const fullPath = col.path === "/" ? "/" + name : col.path + "/" + name;
+  return { colIndex: fc, entry, fullPath };
 }
 
 function showNotification(message, type) {

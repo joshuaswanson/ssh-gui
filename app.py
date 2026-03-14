@@ -16,6 +16,7 @@ import paramiko
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
+app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500MB upload limit
 socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 
 # Single-user SSH state
@@ -564,6 +565,119 @@ def preview_file():
         return jsonify({"error": "Permission denied"}), 403
     except FileNotFoundError:
         return jsonify({"error": f"Not found: {path}"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/upload", methods=["POST"])
+def upload_file():
+    if not ssh_state["sftp"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    dest_dir = request.form.get("dest_dir", "")
+    if not dest_dir:
+        return jsonify({"error": "dest_dir is required"}), 400
+
+    files = request.files.getlist("files")
+    if not files:
+        return jsonify({"error": "No files provided"}), 400
+
+    uploaded = []
+    errors = []
+    for f in files:
+        filename = f.filename
+        if not filename:
+            continue
+        remote_path = posixpath.join(dest_dir, filename)
+        try:
+            with ssh_state["sftp"].open(remote_path, "wb") as remote_f:
+                while True:
+                    chunk = f.read(65536)
+                    if not chunk:
+                        break
+                    remote_f.write(chunk)
+            uploaded.append(filename)
+        except Exception as e:
+            errors.append(f"{filename}: {str(e)}")
+
+    if errors and not uploaded:
+        return jsonify({"error": "; ".join(errors)}), 400
+
+    result = {"status": "ok", "uploaded": uploaded}
+    if errors:
+        result["errors"] = errors
+    return jsonify(result)
+
+
+@app.route("/api/save-file", methods=["POST"])
+def save_file():
+    if not ssh_state["sftp"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    path = data.get("path", "")
+    content = data.get("content", "")
+
+    if not path:
+        return jsonify({"error": "path is required"}), 400
+
+    try:
+        with ssh_state["sftp"].open(path, "w") as f:
+            f.write(content)
+        return jsonify({"status": "ok"})
+    except PermissionError:
+        return jsonify({"error": "Permission denied"}), 403
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/search", methods=["POST"])
+def search_files():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    path = data.get("path", "")
+    query = data.get("query", "")
+
+    if not path or not query:
+        return jsonify({"error": "path and query are required"}), 400
+
+    try:
+        quoted_path = shlex.quote(path)
+        # Escape special find characters
+        safe_query = query.replace("\\", "\\\\").replace("'", "'\\''")
+        cmd = (
+            f"find {quoted_path} -maxdepth 5 -iname '*{safe_query}*' "
+            f"2>/dev/null | head -200"
+        )
+        _, stdout, stderr = ssh_state["client"].exec_command(cmd, timeout=10)
+        output = stdout.read().decode("utf-8", errors="replace").strip()
+
+        results = []
+        if output:
+            for line in output.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                name = posixpath.basename(line)
+                parent = posixpath.dirname(line)
+                try:
+                    s = ssh_state["sftp"].stat(line)
+                    is_dir = stat.S_ISDIR(s.st_mode)
+                    size = s.st_size if s.st_size else 0
+                except Exception:
+                    is_dir = False
+                    size = 0
+                results.append({
+                    "name": name,
+                    "path": line,
+                    "parent": parent,
+                    "is_dir": is_dir,
+                    "size": size,
+                })
+
+        return jsonify({"results": results})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
