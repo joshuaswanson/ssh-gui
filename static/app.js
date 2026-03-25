@@ -4262,9 +4262,9 @@ function renderTmuxBar() {
   shellTab.className = "tmux-tab" + (!state.tmux.inTmux ? " active" : "");
   shellTab.innerHTML = `<span class="tmux-tab-label">Shell</span>`;
   shellTab.addEventListener("click", () => {
-    if (state.tmux.inTmux && state.socket) {
-      // Detach from tmux
-      state.socket.emit("terminal_input", { data: "tmux detach\r" });
+    if (state.socket) {
+      // Send Ctrl+B then d (tmux detach keybinding)
+      state.socket.emit("terminal_input", { data: "\x02d" });
       state.tmux.inTmux = false;
       renderTmuxBar();
     }
