@@ -4218,8 +4218,14 @@ async function refreshTmuxState() {
       return;
     }
 
+    // Disable tmux mouse mode to prevent escape sequence leaks (once)
     if (!state.tmux.attached && status.session) {
       state.tmux.attached = true;
+      fetch("/api/run-command", {
+        method: "POST",
+        headers: connHeaders(),
+        body: JSON.stringify({ command: "tmux set -g mouse off" }),
+      }).catch(() => {});
     }
 
     const [windowsResp, panesResp] = await Promise.all([
@@ -4261,7 +4267,7 @@ function renderTmuxBar() {
     if (!state.tmux.inTmux) return;
     // Switch to plain shell by opening a new channel
     if (state.socket && state.terminal) {
-      state.terminal.clear();
+      state.terminal.reset();
       state.socket.emit("terminal_switch", {
         connection_id: state.connectionId,
         cols: state.terminal.cols,
@@ -4282,7 +4288,7 @@ function renderTmuxBar() {
     tab.addEventListener("click", () => {
       if (!state.tmux.inTmux && state.socket && state.terminal) {
         // Switch to tmux by opening a new channel attached to tmux
-        state.terminal.clear();
+        state.terminal.reset();
         state.socket.emit("terminal_switch", {
           connection_id: state.connectionId,
           tmux_session: state.tmux.session,
