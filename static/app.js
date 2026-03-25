@@ -26,6 +26,7 @@ const state = {
     windows: [],
     panes: [],
     pollInterval: null,
+    attached: false,
   },
   gitBranch: null,
   history: [],
@@ -4210,9 +4211,18 @@ async function refreshTmuxState() {
 
     if (!status.active) {
       state.tmux.windows = [];
+      state.tmux.attached = false;
       const bar = document.getElementById("tmux-bar");
       if (bar) bar.classList.add("hidden");
       return;
+    }
+
+    // Auto-attach terminal to tmux session on first detection
+    if (!state.tmux.attached && status.session && state.socket) {
+      state.tmux.attached = true;
+      state.socket.emit("terminal_input", {
+        data: `tmux attach -t ${status.session}\r`,
+      });
     }
 
     const [windowsResp, panesResp] = await Promise.all([
