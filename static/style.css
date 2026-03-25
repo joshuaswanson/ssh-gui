@@ -467,6 +467,66 @@ body {
   flex-shrink: 0;
 }
 
+/* Connection Tabs */
+
+.connection-tabs {
+  display: flex;
+  align-items: center;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  padding: 0 8px;
+  height: 32px;
+  flex-shrink: 0;
+  gap: 2px;
+  overflow-x: auto;
+}
+
+.conn-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+
+.conn-tab:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.conn-tab.active {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.conn-tab-close {
+  font-size: 14px;
+  opacity: 0.4;
+  cursor: pointer;
+}
+
+.conn-tab-close:hover {
+  opacity: 1;
+  color: var(--red);
+}
+
+.conn-tab-add {
+  font-size: 16px;
+  font-weight: 300;
+  opacity: 0.5;
+  padding: 4px 8px;
+}
+
+.conn-tab-add:hover {
+  opacity: 1;
+}
+
 /* Nav buttons */
 
 .nav-btn:disabled {

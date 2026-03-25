@@ -2,6 +2,8 @@
 
 const state = {
   connected: false,
+  connectionId: null,
+  connections: [], // [{id, host, username, homeDir, savedState}]
   host: "",
   username: "",
   homeDir: "",
@@ -104,13 +106,19 @@ function checkDisconnected(data, status) {
   return false;
 }
 
+function connHeaders(extra = {}) {
+  const headers = { "Content-Type": "application/json", ...extra };
+  if (state.connectionId) headers["X-Connection-Id"] = state.connectionId;
+  return headers;
+}
+
 async function cachedPost(url, body, ttlMs, signal) {
   const cached = apiCache.get(url, body);
   if (cached) return cached;
 
   const opts = {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: connHeaders(),
     body: JSON.stringify(body),
   };
   if (signal) opts.signal = signal;
@@ -432,7 +440,7 @@ async function connectToHost(host) {
   try {
     const response = await fetch("/api/connect", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({
         config_host: host.name,
         hostname: host.hostname,
@@ -474,7 +482,7 @@ async function handleManualConnect(event) {
   try {
     const response = await fetch("/api/connect", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({
         hostname,
         username,
@@ -519,7 +527,7 @@ async function handleSaveAndConnect() {
   try {
     const saveResp = await fetch("/api/save-host", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({
         alias,
         hostname,
@@ -547,9 +555,19 @@ async function handleSaveAndConnect() {
 
 function onConnected(data) {
   state.connected = true;
+  state.connectionId = data.connection_id;
   state.host = data.host;
   state.username = data.username;
   state.homeDir = data.home_dir;
+
+  // Add to connections list
+  state.connections.push({
+    id: data.connection_id,
+    host: data.host,
+    username: data.username,
+    homeDir: data.home_dir,
+  });
+  renderConnectionTabs();
 
   document.getElementById("connection-info").textContent =
     `${data.username}@${data.host}`;
@@ -566,14 +584,17 @@ function onConnected(data) {
 
 async function handleDisconnect() {
   try {
-    await fetch("/api/disconnect", { method: "POST" });
+    await fetch("/api/disconnect", {
+      method: "POST",
+      headers: connHeaders(),
+    });
   } catch (_) {
     // ignore
   }
 
-  state.connected = false;
-  state.columns = [];
-  state.focusedColumn = 0;
+  // Remove from connections list
+  const idx = state.connections.findIndex((c) => c.id === state.connectionId);
+  if (idx >= 0) state.connections.splice(idx, 1);
 
   if (state.socket) {
     state.socket.disconnect();
@@ -592,7 +613,126 @@ async function handleDisconnect() {
   apiCache.clear();
   state.undoStack = [];
 
-  showScreen("connect");
+  // If other connections exist, switch to one
+  if (state.connections.length > 0) {
+    switchToConnection(state.connections[state.connections.length - 1].id);
+  } else {
+    state.connected = false;
+    state.connectionId = null;
+    state.columns = [];
+    state.focusedColumn = 0;
+    renderConnectionTabs();
+    showScreen("connect");
+  }
+}
+
+// ── Connection Tabs ──────────────────────────────────────────────────
+
+function renderConnectionTabs() {
+  const tabBar = document.getElementById("connection-tabs");
+  if (!tabBar) return;
+  if (state.connections.length <= 1) {
+    tabBar.classList.add("hidden");
+    return;
+  }
+  tabBar.classList.remove("hidden");
+  tabBar.innerHTML = "";
+  state.connections.forEach((conn) => {
+    const tab = document.createElement("div");
+    tab.className =
+      "conn-tab" + (conn.id === state.connectionId ? " active" : "");
+    tab.innerHTML = `
+      <span class="conn-tab-name">${escapeHtml(conn.username)}@${escapeHtml(conn.host)}</span>
+      <span class="conn-tab-close" title="Disconnect">&times;</span>`;
+    tab.querySelector(".conn-tab-name").addEventListener("click", () => {
+      if (conn.id !== state.connectionId) switchToConnection(conn.id);
+    });
+    tab.querySelector(".conn-tab-close").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const prev = state.connectionId;
+      state.connectionId = conn.id;
+      handleDisconnect();
+    });
+    tabBar.appendChild(tab);
+  });
+  const addBtn = document.createElement("div");
+  addBtn.className = "conn-tab conn-tab-add";
+  addBtn.textContent = "+";
+  addBtn.title = "New connection";
+  addBtn.addEventListener("click", () => {
+    saveCurrentConnectionState();
+    showScreen("connect");
+  });
+  tabBar.appendChild(addBtn);
+}
+
+function saveCurrentConnectionState() {
+  const conn = state.connections.find((c) => c.id === state.connectionId);
+  if (!conn) return;
+  conn.savedState = {
+    columns: state.columns,
+    focusedColumn: state.focusedColumn,
+    history: state.history,
+    historyIndex: state.historyIndex,
+    gitBranch: state.gitBranch,
+    sortMode: state.sortMode,
+    sortAsc: state.sortAsc,
+    showHidden: state.showHidden,
+  };
+}
+
+function switchToConnection(connId) {
+  saveCurrentConnectionState();
+  if (state.socket) {
+    state.socket.disconnect();
+    state.socket = null;
+  }
+  if (state.terminal) {
+    state.terminal.dispose();
+    state.terminal = null;
+    state.fitAddon = null;
+  }
+  stopTmuxPolling();
+  stopFileWatcher();
+  apiCache.clear();
+
+  const conn = state.connections.find((c) => c.id === connId);
+  if (!conn) return;
+
+  state.connectionId = connId;
+  state.host = conn.host;
+  state.username = conn.username;
+  state.homeDir = conn.homeDir;
+  state.connected = true;
+
+  if (conn.savedState) {
+    state.columns = conn.savedState.columns;
+    state.focusedColumn = conn.savedState.focusedColumn;
+    state.history = conn.savedState.history;
+    state.historyIndex = conn.savedState.historyIndex;
+    state.gitBranch = conn.savedState.gitBranch;
+    state.sortMode = conn.savedState.sortMode;
+    state.sortAsc = conn.savedState.sortAsc;
+    state.showHidden = conn.savedState.showHidden;
+  } else {
+    state.columns = [];
+    state.focusedColumn = 0;
+    state.history = [];
+    state.historyIndex = -1;
+  }
+
+  document.getElementById("connection-info").textContent =
+    `${conn.username}@${conn.host}`;
+  showScreen("main");
+  renderConnectionTabs();
+  renderColumns();
+  updateBreadcrumb();
+  updateNavButtons();
+  renderSidebar();
+  initTerminal();
+  startTmuxPolling();
+  startFileWatcher();
+  if (state.columns.length === 0) navigateTo(conn.homeDir);
 }
 
 // ── File Browser ─────────────────────────────────────────────────────
@@ -796,7 +936,7 @@ async function fetchPreview(filePath) {
   try {
     const response = await fetch("/api/preview", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ path: filePath }),
     });
     const data = await response.json();
@@ -1479,7 +1619,7 @@ async function handleDrop(e, destDir) {
     try {
       const resp = await fetch("/api/move", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: connHeaders(),
         body: JSON.stringify({ src, dest }),
       });
       if (!resp.ok) errors++;
@@ -1507,7 +1647,7 @@ async function refreshColumns() {
     try {
       const resp = await fetch("/api/ls", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: connHeaders(),
         body: JSON.stringify({ path: col.path }),
       });
       if (resp.ok) {
@@ -1644,7 +1784,7 @@ async function fetchStatInfo(filePath, colIndex) {
   try {
     const resp = await fetch("/api/stat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ path: filePath }),
     });
     const data = await resp.json();
@@ -1678,7 +1818,7 @@ async function showFolderInfo(colIndex, entry, fullPath) {
   try {
     const data = await fetch("/api/stat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ path: fullPath }),
     }).then((r) => r.json());
     const col = state.columns[colIndex + 1];
@@ -1992,7 +2132,11 @@ function startTerminalSession() {
   state.socket.on("connect", () => {
     const cols = state.terminal ? state.terminal.cols : 80;
     const rows = state.terminal ? state.terminal.rows : 24;
-    state.socket.emit("terminal_start", { cols, rows });
+    state.socket.emit("terminal_start", {
+      cols,
+      rows,
+      connection_id: state.connectionId,
+    });
   });
 
   state.socket.on("connect_error", (err) => {
@@ -2226,7 +2370,7 @@ async function handleChmod(path, who, perm, value) {
   try {
     const resp = await fetch("/api/chmod", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ path, mode: octal }),
     });
     const data = await resp.json();
@@ -2291,7 +2435,7 @@ async function createNewFolder(dirPath) {
   try {
     const resp = await fetch("/api/mkdir", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ path: fullPath }),
     });
     const data = await resp.json();
@@ -2497,7 +2641,7 @@ async function duplicateEntry(colIndex, entry, fullPath) {
   try {
     const resp = await fetch("/api/duplicate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ path: fullPath, is_dir: entry.is_dir }),
     });
     const data = await resp.json();
@@ -2520,7 +2664,7 @@ async function confirmDelete(colIndex, entry, fullPath) {
   try {
     const resp = await fetch("/api/delete", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ path: fullPath, is_dir: entry.is_dir }),
     });
     const data = await resp.json();
@@ -2551,7 +2695,7 @@ async function confirmDeleteMulti(colIndex) {
     try {
       const resp = await fetch("/api/delete", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: connHeaders(),
         body: JSON.stringify({ path: fullPath, is_dir: entry.is_dir }),
       });
       const data = await resp.json();
@@ -2573,7 +2717,7 @@ async function downloadFile(path) {
   try {
     const resp = await fetch("/api/download", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ path }),
     });
     if (!resp.ok) {
@@ -2651,7 +2795,7 @@ async function commitRename(colIndex, oldName, newName) {
   try {
     const resp = await fetch("/api/move", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ src: oldPath, dest: newPath }),
     });
     if (!resp.ok) {
@@ -2862,7 +3006,7 @@ async function saveEditedFile() {
   try {
     const resp = await fetch("/api/save-file", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ path, content }),
     });
     const data = await resp.json();
@@ -3171,7 +3315,7 @@ async function undoLastAction() {
     if (action.type === "rename" || action.type === "move") {
       await fetch("/api/move", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: connHeaders(),
         body: JSON.stringify({ src: action.dest, dest: action.src }),
       });
       showNotification(`Undid ${action.type}`, "success");
@@ -3292,7 +3436,7 @@ async function runCommandFromDialog(paths, cwd) {
   try {
     const resp = await fetch("/api/run-command", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ command: cmd, paths, cwd }),
     });
     const data = await resp.json();
@@ -3313,7 +3457,7 @@ async function showDiffView(pathA, pathB) {
   try {
     const data = await fetch("/api/diff", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ path_a: pathA, path_b: pathB }),
     }).then((r) => r.json());
     if (data.error) {
@@ -3434,7 +3578,7 @@ function showBatchRenameDialog(colIndex) {
     try {
       await fetch("/api/batch-rename", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: connHeaders(),
         body: JSON.stringify({ renames }),
       });
       showNotification(`Renamed ${renames.length} files`, "success");
@@ -3619,7 +3763,7 @@ async function generateKey() {
   try {
     const data = await fetch("/api/ssh-keys/generate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ name, type, passphrase, comment }),
     }).then((r) => r.json());
     if (data.error) {
@@ -4220,7 +4364,7 @@ async function tmuxSelectWindow(index) {
   try {
     await fetch("/api/tmux/select-window", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ index }),
     });
     await refreshTmuxState();
@@ -4237,7 +4381,7 @@ function tmuxRenameWindow(index) {
 
   fetch("/api/tmux/rename-window", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: connHeaders(),
     body: JSON.stringify({ index, name }),
   })
     .then(() => refreshTmuxState())
@@ -4249,7 +4393,7 @@ async function tmuxKillWindow(index) {
   try {
     await fetch("/api/tmux/kill-window", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ index }),
     });
     await refreshTmuxState();
@@ -4262,7 +4406,7 @@ async function tmuxSplitPane(direction) {
   try {
     await fetch("/api/tmux/split-pane", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ direction }),
     });
     await refreshTmuxState();
@@ -4320,7 +4464,7 @@ async function fetchPackageList() {
   try {
     const resp = await fetch("/api/packages/list", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({ venv_path: state.packagePanel.venvPath }),
     });
     const data = await resp.json();
@@ -4409,7 +4553,7 @@ async function installPackageFromInput() {
   try {
     const resp = await fetch("/api/packages/install", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({
         package: name,
         venv_path: state.packagePanel.venvPath,
@@ -4436,7 +4580,7 @@ async function uninstallPackage(name) {
   try {
     const resp = await fetch("/api/packages/uninstall", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: connHeaders(),
       body: JSON.stringify({
         package: name,
         venv_path: state.packagePanel.venvPath,

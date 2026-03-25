@@ -6,6 +6,7 @@ import posixpath
 import threading
 import shlex
 import base64
+import uuid
 from pathlib import Path
 
 import io
@@ -19,7 +20,8 @@ app.secret_key = os.urandom(24)
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500MB upload limit
 socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 
-# Single-user SSH state
+# Multi-connection state
+connections = {}
 ssh_state = {
     "client": None,
     "jump_client": None,
@@ -28,6 +30,41 @@ ssh_state = {
     "home_dir": None,
     "host": None,
 }
+
+
+def get_connection_id():
+    """Get connection ID from request header or body."""
+    conn_id = request.headers.get("X-Connection-Id")
+    if not conn_id and request.is_json and request.json:
+        conn_id = request.json.get("connection_id")
+    return conn_id
+
+
+@app.before_request
+def set_active_connection():
+    """Swap ssh_state to the correct connection for this request."""
+    global ssh_state
+    conn_id = None
+    # Try header first
+    conn_id = request.headers.get("X-Connection-Id")
+    # Try JSON body
+    if not conn_id and request.content_type and "json" in request.content_type:
+        try:
+            body = request.get_json(silent=True)
+            if body:
+                conn_id = body.get("connection_id")
+        except Exception:
+            pass
+    if conn_id and conn_id in connections:
+        ssh_state = connections[conn_id]
+    elif connections:
+        # Default to most recent connection
+        ssh_state = list(connections.values())[-1]
+    else:
+        ssh_state = {
+            "client": None, "jump_client": None, "sftp": None,
+            "channel": None, "home_dir": None, "host": None,
+        }
 
 
 def parse_ssh_config():
@@ -230,16 +267,23 @@ def connect():
         _, stdout, _ = client.exec_command("echo $HOME")
         home_dir = stdout.read().decode().strip()
 
-        ssh_state["client"] = client
-        ssh_state["sftp"] = sftp
-        ssh_state["home_dir"] = home_dir
-        ssh_state["host"] = config_host or hostname
+        conn_id = str(uuid.uuid4())
+        conn = {
+            "client": client,
+            "jump_client": ssh_state.get("jump_client"),
+            "sftp": sftp,
+            "channel": None,
+            "home_dir": home_dir,
+            "host": config_host or hostname,
+        }
+        connections[conn_id] = conn
 
         return jsonify(
             {
                 "status": "connected",
+                "connection_id": conn_id,
                 "home_dir": home_dir,
-                "host": ssh_state["host"],
+                "host": conn["host"],
                 "username": username,
             }
         )
@@ -252,7 +296,17 @@ def connect():
 
 @app.route("/api/disconnect", methods=["POST"])
 def disconnect():
-    cleanup_connection()
+    conn_id = get_connection_id()
+    if conn_id and conn_id in connections:
+        conn = connections.pop(conn_id)
+        for key in ("channel", "sftp", "client", "jump_client"):
+            if conn.get(key):
+                try:
+                    conn[key].close()
+                except Exception:
+                    pass
+    else:
+        cleanup_connection()
     return jsonify({"status": "disconnected"})
 
 
@@ -1365,19 +1419,21 @@ def handle_disconnect():
 
 @socketio.on("terminal_start")
 def handle_terminal_start(data):
-    if not ssh_state["client"]:
+    conn_id = data.get("connection_id")
+    conn = connections.get(conn_id) if conn_id else (list(connections.values())[-1] if connections else None)
+    if not conn or not conn["client"]:
         emit("terminal_output", {"data": "\r\nNot connected to SSH server.\r\n"})
         return
 
     sid = request.sid
 
     try:
-        channel = ssh_state["client"].invoke_shell(
+        channel = conn["client"].invoke_shell(
             term="xterm-256color",
             width=data.get("cols", 80),
             height=data.get("rows", 24),
         )
-        ssh_state["channel"] = channel
+        conn["channel"] = channel
 
         def read_output():
             try:
