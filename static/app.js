@@ -4220,8 +4220,9 @@ async function refreshTmuxState() {
     // Auto-attach terminal to tmux session on first detection
     if (!state.tmux.attached && status.session && state.socket) {
       state.tmux.attached = true;
+      // Enable mouse mode for proper scrolling, then attach
       state.socket.emit("terminal_input", {
-        data: `tmux attach -t ${status.session}\r`,
+        data: `tmux set -g mouse on 2>/dev/null; tmux attach -t ${status.session}\r`,
       });
     }
 
