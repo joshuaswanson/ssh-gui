@@ -87,6 +87,19 @@ const apiCache = {
 };
 
 // Cached fetch helper: returns cached data or fetches, caches, and returns
+function checkDisconnected(data, status) {
+  if (
+    state.connected &&
+    (status === 400 || status === 500) &&
+    data.error &&
+    /not connected/i.test(data.error)
+  ) {
+    handleDisconnect();
+    return true;
+  }
+  return false;
+}
+
 async function cachedPost(url, body, ttlMs) {
   const cached = apiCache.get(url, body);
   if (cached) return cached;
@@ -97,6 +110,7 @@ async function cachedPost(url, body, ttlMs) {
     body: JSON.stringify(body),
   });
   const data = await resp.json();
+  if (checkDisconnected(data, resp.status)) return data;
   if (resp.ok) apiCache.set(url, body, data, ttlMs);
   return data;
 }
