@@ -288,6 +288,8 @@ def list_directory():
                     "size": attr.st_size if attr.st_size else 0,
                     "mode": stat.filemode(entry_mode) if entry_mode else "?---------",
                     "mtime": attr.st_mtime if attr.st_mtime else 0,
+                    "uid": attr.st_uid if attr.st_uid is not None else -1,
+                    "gid": attr.st_gid if attr.st_gid is not None else -1,
                 }
             )
 
@@ -505,6 +507,57 @@ IMAGE_MIME = {
     ".ico": "image/x-icon",
     ".svg": "image/svg+xml",
 }
+
+
+@app.route("/api/stat", methods=["POST"])
+def stat_entry():
+    if not ssh_state["sftp"] or not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    path = request.json.get("path", "")
+    if not path:
+        return jsonify({"error": "path is required"}), 400
+
+    try:
+        s = ssh_state["sftp"].stat(path)
+        is_dir = stat.S_ISDIR(s.st_mode) if s.st_mode else False
+        mode_str = stat.filemode(s.st_mode) if s.st_mode else "?---------"
+        uid = s.st_uid if s.st_uid is not None else -1
+        gid = s.st_gid if s.st_gid is not None else -1
+
+        # Resolve owner/group names via SSH
+        owner = str(uid)
+        group = str(gid)
+        try:
+            cmd = f"id -nu {uid} 2>/dev/null; id -ng {gid} 2>/dev/null"
+            _, stdout, _ = ssh_state["client"].exec_command(cmd, timeout=5)
+            lines = stdout.read().decode().strip().split("\n")
+            if len(lines) >= 1 and lines[0]:
+                owner = lines[0]
+            if len(lines) >= 2 and lines[1]:
+                group = lines[1]
+        except Exception:
+            pass
+
+        result = {
+            "path": path,
+            "name": posixpath.basename(path) or "/",
+            "is_dir": is_dir,
+            "size": s.st_size if s.st_size else 0,
+            "mode": mode_str,
+            "mtime": s.st_mtime if s.st_mtime else 0,
+            "uid": uid,
+            "gid": gid,
+            "owner": owner,
+            "group": group,
+        }
+        return jsonify(result)
+    except PermissionError:
+        return jsonify({"error": "Permission denied"}), 403
+    except FileNotFoundError:
+        return jsonify({"error": f"Not found: {path}"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 
 @app.route("/api/preview", methods=["POST"])

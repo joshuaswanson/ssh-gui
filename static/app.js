@@ -864,14 +864,14 @@ function getExtension(name) {
   return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
 }
 
-function changeSort() {
+async function changeSort() {
   const select = document.getElementById("sort-select");
   state.sortMode = select.value;
-  if (state.sortMode === "creator") {
-    fetchColumnAuthors();
-  }
   renderColumns();
   updateSortDirIcon();
+  if (state.sortMode === "creator") {
+    await fetchColumnAuthors();
+  }
 }
 
 async function fetchColumnAuthors() {
@@ -879,9 +879,8 @@ async function fetchColumnAuthors() {
   for (let i = 0; i < state.columns.length; i++) {
     const col = state.columns[i];
     if (!col.path || col.fileInfo || col.filePreview) continue;
-    // Skip if authors already loaded and entries have them
-    if (col._authorsFetched && col.entries.some((e) => e._gitAuthor)) continue;
-    col._authorsFetched = true;
+    // Skip if authors already loaded for these entries
+    if (col.entries.some((e) => e._gitAuthor)) continue;
     const names = col.entries.map((e) => e.name);
     if (names.length === 0) continue;
     try {
@@ -1039,23 +1038,43 @@ function renderColumns() {
 
       const permBits = parseModeBits(info.mode);
 
+      const infoIcon = info.is_dir
+        ? FOLDER_ICON.replace('width="16"', 'width="48"').replace(
+            'height="16"',
+            'height="48"',
+          )
+        : FILE_ICON_LARGE;
+      const badge = info.is_dir ? "Folder" : info.is_link ? "Symlink" : "";
+
       colEl.innerHTML = `
                 <div class="file-info-header">
-                    <div class="file-info-icon">${FILE_ICON_LARGE}</div>
+                    <div class="file-info-icon">${infoIcon}</div>
                     <div class="file-info-name">${escapeHtml(info.name)} <span class="copy-icon" onclick="copyToClipboard('${escapeAttr(info.name)}')" title="Copy name">${COPY_ICON}</span></div>
-                    ${info.is_link ? '<div class="file-info-badge">Symlink</div>' : ""}
+                    ${badge ? `<div class="file-info-badge">${badge}</div>` : ""}
                 </div>
                 <div class="file-info-details">
                     <div class="file-info-section">
                         <div class="file-info-section-title">General</div>
-                        <div class="file-info-row">
+                        ${
+                          !info.is_dir
+                            ? `<div class="file-info-row">
                             <span class="label">Size</span>
                             <span class="value">${formatSize(info.size)}</span>
-                        </div>
+                        </div>`
+                            : ""
+                        }
                         <div class="file-info-row">
                             <span class="label">Modified</span>
                             <span class="value">${formatDate(info.mtime)}</span>
                         </div>
+                        ${
+                          info.owner
+                            ? `<div class="file-info-row">
+                            <span class="label">Owner</span>
+                            <span class="value">${escapeHtml(info.owner)}${info.group ? ":" + escapeHtml(info.group) : ""}</span>
+                        </div>`
+                            : ""
+                        }
                         ${
                           info._gitAuthor
                             ? `<div class="file-info-row">
@@ -1083,9 +1102,10 @@ function renderColumns() {
 
       container.appendChild(colEl);
 
-      // Fetch git author asynchronously
-      if (!info._gitFetched) {
-        info._gitFetched = true;
+      // Fetch owner/group and git author asynchronously
+      if (!info._statFetched) {
+        info._statFetched = true;
+        fetchStatInfo(info.path, colIndex);
         fetchGitInfo(info.path, colIndex);
       }
 
@@ -1568,6 +1588,62 @@ function updatePathBar() {
     ? `<span class="path-bar-branch">${escapeHtml(state.gitBranch)}</span>`
     : "";
   pathBar.innerHTML = `<span class="path-bar-text"><bdi>${escapeHtml(displayPath)}</bdi></span><button class="path-bar-copy" onclick="copyToClipboard('${escapeAttr(displayPath)}')" title="Copy path">${COPY_ICON}</button>${branchHtml}`;
+}
+
+async function fetchStatInfo(filePath, colIndex) {
+  try {
+    const resp = await fetch("/api/stat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: filePath }),
+    });
+    const data = await resp.json();
+    if (data.owner) {
+      const col = state.columns[colIndex];
+      if (col && col.fileInfo && col.fileInfo.path === filePath) {
+        col.fileInfo.owner = data.owner;
+        col.fileInfo.group = data.group;
+        renderColumns();
+      }
+    }
+  } catch {}
+}
+
+async function showFolderInfo(colIndex, entry, fullPath) {
+  // Add a folder info column
+  state.columns = state.columns.slice(0, colIndex + 1);
+  state.columns.push({
+    fileInfo: {
+      path: fullPath,
+      name: entry.name,
+      is_dir: true,
+      size: entry.size || 0,
+      mode: entry.mode || "drwxr-xr-x",
+      mtime: entry.mtime || 0,
+    },
+  });
+  renderColumns();
+
+  // Fetch detailed stat info (owner, group)
+  try {
+    const data = await fetch("/api/stat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: fullPath }),
+    }).then((r) => r.json());
+    const col = state.columns[colIndex + 1];
+    if (col && col.fileInfo && col.fileInfo.path === fullPath) {
+      col.fileInfo.owner = data.owner;
+      col.fileInfo.group = data.group;
+      col.fileInfo.size = data.size;
+      col.fileInfo.mode = data.mode;
+      col.fileInfo.mtime = data.mtime;
+      renderColumns();
+    }
+  } catch {}
+
+  // Also fetch git info
+  fetchGitInfo(fullPath, colIndex + 1);
 }
 
 async function fetchGitInfo(filePath, colIndex) {
@@ -2222,6 +2298,13 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
         icon: CTX.download,
         label: "Download",
         action: () => downloadFile(fullPath),
+      });
+    }
+    if (entry.is_dir) {
+      items.push({
+        icon: CTX.copyName,
+        label: "Get Info",
+        action: () => showFolderInfo(colIndex, entry, fullPath),
       });
     }
     items.push(
