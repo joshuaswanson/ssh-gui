@@ -27,6 +27,7 @@ const state = {
     panes: [],
     pollInterval: null,
     attached: false,
+    inTmux: false,
   },
   gitBranch: null,
   history: [],
@@ -4217,12 +4218,11 @@ async function refreshTmuxState() {
       return;
     }
 
-    // Auto-attach terminal to tmux session on first detection
+    // Enable tmux mouse mode for proper scrolling (once)
     if (!state.tmux.attached && status.session && state.socket) {
       state.tmux.attached = true;
-      // Enable mouse mode for proper scrolling, then attach
       state.socket.emit("terminal_input", {
-        data: `tmux set -g mouse on 2>/dev/null; tmux attach -t ${status.session}\r`,
+        data: "tmux set -g mouse on 2>/dev/null\r",
       });
     }
 
@@ -4253,15 +4253,42 @@ function renderTmuxBar() {
   bar.classList.remove("hidden");
   bar.innerHTML = "";
 
-  // Window tabs
+  // Tabs
   const tabs = document.createElement("div");
   tabs.className = "tmux-tabs";
 
+  // Shell tab (plain terminal, not attached to tmux)
+  const shellTab = document.createElement("div");
+  shellTab.className = "tmux-tab" + (!state.tmux.inTmux ? " active" : "");
+  shellTab.innerHTML = `<span class="tmux-tab-label">Shell</span>`;
+  shellTab.addEventListener("click", () => {
+    if (state.tmux.inTmux && state.socket) {
+      // Detach from tmux
+      state.socket.emit("terminal_input", { data: "tmux detach\r" });
+      state.tmux.inTmux = false;
+      renderTmuxBar();
+    }
+  });
+  tabs.appendChild(shellTab);
+
+  // Tmux window tabs
   state.tmux.windows.forEach((win) => {
     const tab = document.createElement("div");
-    tab.className = "tmux-tab" + (win.active ? " active" : "");
+    tab.className =
+      "tmux-tab" + (state.tmux.inTmux && win.active ? " active" : "");
     tab.innerHTML = `<span class="tmux-tab-label">${escapeHtml(win.name)}</span>`;
-    tab.addEventListener("click", () => tmuxSelectWindow(win.index));
+    tab.addEventListener("click", () => {
+      if (!state.tmux.inTmux && state.socket) {
+        // Attach to tmux and select this window
+        state.socket.emit("terminal_input", {
+          data: `tmux attach -t ${state.tmux.session}\\; select-window -t ${win.index}\r`,
+        });
+        state.tmux.inTmux = true;
+      } else {
+        tmuxSelectWindow(win.index);
+      }
+      renderTmuxBar();
+    });
     tab.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       showTmuxContextMenu(e.clientX, e.clientY, win);
