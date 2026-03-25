@@ -295,6 +295,27 @@ def list_directory():
 
         entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
 
+        # Resolve uid -> username in bulk
+        uids = set(e["uid"] for e in entries if e["uid"] >= 0)
+        uid_map = {}
+        if uids and ssh_state["client"]:
+            try:
+                parts = " ".join(f"id -nu {u} 2>/dev/null || echo {u}" for u in uids)
+                cmd = f"for u in {' '.join(str(u) for u in uids)}; do echo \"$u $(id -nu $u 2>/dev/null || echo $u)\"; done"
+                _, stdout, _ = ssh_state["client"].exec_command(cmd, timeout=5)
+                for line in stdout.read().decode().strip().split("\n"):
+                    parts = line.split(None, 1)
+                    if len(parts) == 2:
+                        try:
+                            uid_map[int(parts[0])] = parts[1]
+                        except ValueError:
+                            pass
+            except Exception:
+                pass
+
+        for e in entries:
+            e["owner"] = uid_map.get(e["uid"], str(e["uid"]))
+
         return jsonify({"path": path, "entries": entries})
     except PermissionError:
         return jsonify({"error": f"Permission denied: {path}"}), 403

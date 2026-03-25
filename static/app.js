@@ -853,9 +853,8 @@ function sortEntries(entries, mode, asc) {
     }
     case "creator": {
       sorted.sort((a, b) => {
-        const authorA = (a._gitAuthor || "").toLowerCase();
-        const authorB = (b._gitAuthor || "").toLowerCase();
-        // Items without author go to the end
+        const authorA = (a._gitAuthor || a.owner || "").toLowerCase();
+        const authorB = (b._gitAuthor || b.owner || "").toLowerCase();
         if (!authorA && authorB) return 1;
         if (authorA && !authorB) return -1;
         if (authorA !== authorB) return authorA.localeCompare(authorB) * dir;
@@ -1164,12 +1163,13 @@ function renderColumns() {
     }
 
     let lastCreatorSection = null;
-    const hasAnyAuthor =
-      state.sortMode === "creator" && entries.some((e) => e._gitAuthor);
+    const hasAnyCreator =
+      state.sortMode === "creator" &&
+      entries.some((e) => e._gitAuthor || e.owner);
     entries.forEach((entry) => {
-      // Show section headers when sorting by creator (only if column has git data)
-      if (hasAnyAuthor) {
-        const author = entry._gitAuthor || "Unknown";
+      // Show section headers when sorting by creator
+      if (hasAnyCreator) {
+        const author = entry._gitAuthor || entry.owner || "Unknown";
         if (author !== lastCreatorSection) {
           lastCreatorSection = author;
           const header = document.createElement("div");
