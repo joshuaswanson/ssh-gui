@@ -24,6 +24,7 @@ const state = {
     active: false,
     session: null,
     windows: [],
+    panes: [],
     pollInterval: null,
   },
   gitBranch: null,
@@ -4214,9 +4215,14 @@ async function refreshTmuxState() {
       return;
     }
 
-    const windowsResp = await fetch("/api/tmux/windows");
+    const [windowsResp, panesResp] = await Promise.all([
+      fetch("/api/tmux/windows", { headers: connHeaders() }),
+      fetch("/api/tmux/panes", { headers: connHeaders() }),
+    ]);
     const windowsData = await windowsResp.json();
+    const panesData = await panesResp.json();
     state.tmux.windows = windowsData.windows || [];
+    state.tmux.panes = panesData.panes || [];
 
     renderTmuxBar();
   } catch {
@@ -4236,49 +4242,130 @@ function renderTmuxBar() {
   bar.classList.remove("hidden");
   bar.innerHTML = "";
 
-  // Terminal tabs - each tmux window is a tab
+  // Window tabs
   const tabs = document.createElement("div");
   tabs.className = "tmux-tabs";
 
   state.tmux.windows.forEach((win) => {
     const tab = document.createElement("div");
     tab.className = "tmux-tab" + (win.active ? " active" : "");
-
-    const icon = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 14.25 15H1.75A1.75 1.75 0 0 1 0 13.25Zm1.75-.25a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25Z"/></svg>`;
-    const label = escapeHtml(win.name);
-    const panes =
-      win.pane_count > 1
-        ? `<span class="tmux-pane-badge">${win.pane_count} panes</span>`
-        : "";
-
-    tab.innerHTML = `<span class="tmux-tab-icon">${icon}</span><span class="tmux-tab-label">${label}</span>${panes}`;
-
+    tab.innerHTML = `<span class="tmux-tab-label">${escapeHtml(win.name)}</span>`;
     tab.addEventListener("click", () => tmuxSelectWindow(win.index));
     tab.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       showTmuxContextMenu(e.clientX, e.clientY, win);
     });
-
-    // Close on middle-click
     tab.addEventListener("mousedown", (e) => {
       if (e.button === 1) {
         e.preventDefault();
         tmuxKillWindow(win.index);
       }
     });
-
     tabs.appendChild(tab);
   });
-
   bar.appendChild(tabs);
 
-  // New tab button
+  // New tab
   const addBtn = document.createElement("button");
   addBtn.className = "tmux-add-btn";
   addBtn.title = "New terminal tab";
   addBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2"/></svg>`;
   addBtn.addEventListener("click", tmuxNewWindow);
   bar.appendChild(addBtn);
+
+  // Pane layout minimap (only if multiple panes)
+  const panes = state.tmux.panes || [];
+  if (panes.length > 1) {
+    const minimap = document.createElement("div");
+    minimap.className = "tmux-pane-map";
+
+    // Calculate total dimensions
+    const totalW = Math.max(...panes.map((p) => p.left + p.width));
+    const totalH = Math.max(...panes.map((p) => p.top + p.height));
+
+    panes.forEach((pane) => {
+      const cell = document.createElement("div");
+      cell.className = "tmux-pane-cell" + (pane.active ? " active" : "");
+      cell.style.left = (pane.left / totalW) * 100 + "%";
+      cell.style.top = (pane.top / totalH) * 100 + "%";
+      cell.style.width = (pane.width / totalW) * 100 + "%";
+      cell.style.height = (pane.height / totalH) * 100 + "%";
+      cell.title = pane.command + (pane.active ? " (active)" : "");
+      cell.addEventListener("click", () => {
+        fetch("/api/tmux/select-pane", {
+          method: "POST",
+          headers: connHeaders(),
+          body: JSON.stringify({ pane_id: pane.id }),
+        }).then(() => refreshTmuxState());
+      });
+      cell.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        showPaneContextMenu(e.clientX, e.clientY, pane);
+      });
+      minimap.appendChild(cell);
+    });
+    bar.appendChild(minimap);
+  }
+}
+
+function showPaneContextMenu(x, y, pane) {
+  hideContextMenu();
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.id = "context-menu";
+
+  const items = [
+    {
+      icon: CTX.duplicate,
+      label: "Split Left/Right",
+      action: () => tmuxSplitPane("h"),
+    },
+    {
+      icon: CTX.duplicate,
+      label: "Split Top/Bottom",
+      action: () => tmuxSplitPane("v"),
+    },
+    { separator: true },
+    {
+      icon: CTX.xmark,
+      label: "Close Pane",
+      action: () => {
+        fetch("/api/tmux/kill-pane", {
+          method: "POST",
+          headers: connHeaders(),
+          body: JSON.stringify({ pane_id: pane.id }),
+        }).then(() => refreshTmuxState());
+      },
+      danger: true,
+    },
+  ];
+
+  items.forEach((item) => {
+    if (item.separator) {
+      const sep = document.createElement("div");
+      sep.className = "context-menu-separator";
+      menu.appendChild(sep);
+      return;
+    }
+    const el = document.createElement("div");
+    el.className = "context-menu-item" + (item.danger ? " danger" : "");
+    el.innerHTML = `<span class="ctx-icon">${item.icon}</span><span>${item.label}</span>`;
+    el.addEventListener("click", () => {
+      hideContextMenu();
+      item.action();
+    });
+    menu.appendChild(el);
+  });
+
+  document.body.appendChild(menu);
+  const rect = menu.getBoundingClientRect();
+  if (x + rect.width > window.innerWidth)
+    x = window.innerWidth - rect.width - 8;
+  if (y + rect.height > window.innerHeight)
+    y = window.innerHeight - rect.height - 8;
+  menu.style.left = x + "px";
+  menu.style.top = y + "px";
+  registerContextMenuDismiss();
 }
 
 function showTmuxContextMenu(x, y, win) {

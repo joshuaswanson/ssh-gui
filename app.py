@@ -1181,6 +1181,57 @@ def tmux_windows():
     return jsonify({"windows": windows})
 
 
+@app.route("/api/tmux/panes")
+def tmux_panes():
+    """List panes in the active window with layout info."""
+    if not ssh_state["client"]:
+        return jsonify({"panes": []})
+
+    out, _ = run_ssh_command(
+        "tmux list-panes -F '#{pane_id}|#{pane_index}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}|#{pane_active}|#{pane_current_command}' 2>/dev/null"
+    )
+    if not out:
+        return jsonify({"panes": []})
+
+    panes = []
+    for line in out.split("\n"):
+        parts = line.split("|")
+        if len(parts) >= 8:
+            panes.append({
+                "id": parts[0],
+                "index": int(parts[1]),
+                "left": int(parts[2]),
+                "top": int(parts[3]),
+                "width": int(parts[4]),
+                "height": int(parts[5]),
+                "active": parts[6] == "1",
+                "command": parts[7],
+            })
+    return jsonify({"panes": panes})
+
+
+@app.route("/api/tmux/select-pane", methods=["POST"])
+def tmux_select_pane():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+    pane_id = request.json.get("pane_id", "")
+    if not pane_id:
+        return jsonify({"error": "pane_id required"}), 400
+    run_ssh_command(f"tmux select-pane -t {shlex.quote(pane_id)}")
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/tmux/kill-pane", methods=["POST"])
+def tmux_kill_pane():
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+    pane_id = request.json.get("pane_id", "")
+    if not pane_id:
+        return jsonify({"error": "pane_id required"}), 400
+    run_ssh_command(f"tmux kill-pane -t {shlex.quote(pane_id)}")
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/tmux/new-window", methods=["POST"])
 def tmux_new_window():
     if not ssh_state["client"]:

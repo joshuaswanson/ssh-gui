@@ -1614,6 +1614,40 @@ body {
   opacity: 1;
 }
 
+.tmux-pane-map {
+  position: relative;
+  width: 60px;
+  height: 22px;
+  margin-left: auto;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.tmux-pane-cell {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.tmux-pane-cell:hover {
+  background: var(--accent-bg);
+}
+
+.tmux-pane-cell.active {
+  background: var(--accent);
+  opacity: 0.6;
+}
+
+.tmux-pane-cell.active:hover {
+  opacity: 0.8;
+}
+
 /* ── Package Panel ───────────────────────────────────────────────── */
 
 .package-panel {
