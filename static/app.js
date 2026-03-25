@@ -4236,38 +4236,22 @@ function renderTmuxBar() {
   bar.classList.remove("hidden");
   bar.innerHTML = "";
 
-  // Session label
-  if (state.tmux.session) {
-    const sessionLabel = document.createElement("span");
-    sessionLabel.className = "tmux-session-label";
-    sessionLabel.textContent = state.tmux.session;
-    bar.appendChild(sessionLabel);
-  }
-
-  // Tabs
+  // Terminal tabs - each tmux window is a tab
   const tabs = document.createElement("div");
   tabs.className = "tmux-tabs";
 
   state.tmux.windows.forEach((win) => {
-    const tab = document.createElement("button");
+    const tab = document.createElement("div");
     tab.className = "tmux-tab" + (win.active ? " active" : "");
 
-    let tabContent = escapeHtml(win.name);
-    if (win.pane_count > 1) {
-      tabContent += ` <span class="tmux-pane-badge">${win.pane_count}</span>`;
-    }
+    const icon = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 14.25 15H1.75A1.75 1.75 0 0 1 0 13.25Zm1.75-.25a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25Z"/></svg>`;
+    const label = escapeHtml(win.name);
+    const panes =
+      win.pane_count > 1
+        ? `<span class="tmux-pane-badge">${win.pane_count} panes</span>`
+        : "";
 
-    const closeBtn = document.createElement("button");
-    closeBtn.className = "tmux-tab-close";
-    closeBtn.innerHTML = "&times;";
-    closeBtn.title = "Close window";
-    closeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      tmuxKillWindow(win.index);
-    });
-
-    tab.innerHTML = tabContent;
-    tab.appendChild(closeBtn);
+    tab.innerHTML = `<span class="tmux-tab-icon">${icon}</span><span class="tmux-tab-label">${label}</span>${panes}`;
 
     tab.addEventListener("click", () => tmuxSelectWindow(win.index));
     tab.addEventListener("contextmenu", (e) => {
@@ -4275,38 +4259,26 @@ function renderTmuxBar() {
       showTmuxContextMenu(e.clientX, e.clientY, win);
     });
 
+    // Close on middle-click
+    tab.addEventListener("mousedown", (e) => {
+      if (e.button === 1) {
+        e.preventDefault();
+        tmuxKillWindow(win.index);
+      }
+    });
+
     tabs.appendChild(tab);
   });
 
   bar.appendChild(tabs);
 
-  // Add button
+  // New tab button
   const addBtn = document.createElement("button");
   addBtn.className = "tmux-add-btn";
-  addBtn.innerHTML = "+";
-  addBtn.title = "New window";
+  addBtn.title = "New terminal tab";
+  addBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2"/></svg>`;
   addBtn.addEventListener("click", tmuxNewWindow);
   bar.appendChild(addBtn);
-
-  // Action buttons
-  const actions = document.createElement("div");
-  actions.className = "tmux-actions";
-
-  const splitH = document.createElement("button");
-  splitH.className = "btn btn-icon";
-  splitH.title = "Split horizontally";
-  splitH.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M14 1H2a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/><path d="M7.5 1v14h1V1h-1z"/></svg>`;
-  splitH.addEventListener("click", () => tmuxSplitPane("h"));
-
-  const splitV = document.createElement("button");
-  splitV.className = "btn btn-icon";
-  splitV.title = "Split vertically";
-  splitV.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M14 1H2a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/><path d="M1 7.5h14v1H1v-1z"/></svg>`;
-  splitV.addEventListener("click", () => tmuxSplitPane("v"));
-
-  actions.appendChild(splitH);
-  actions.appendChild(splitV);
-  bar.appendChild(actions);
 }
 
 function showTmuxContextMenu(x, y, win) {
@@ -4316,27 +4288,48 @@ function showTmuxContextMenu(x, y, win) {
   menu.className = "context-menu";
   menu.id = "context-menu";
 
-  const renameItem = document.createElement("div");
-  renameItem.className = "context-menu-item";
-  renameItem.innerHTML = `<span class="ctx-icon">${CTX.rename}</span><span>Rename</span>`;
-  renameItem.addEventListener("click", () => {
-    hideContextMenu();
-    tmuxRenameWindow(win.index);
-  });
-  menu.appendChild(renameItem);
+  const items = [
+    {
+      icon: CTX.rename,
+      label: "Rename Tab",
+      action: () => tmuxRenameWindow(win.index),
+    },
+    { separator: true },
+    {
+      icon: CTX.duplicate,
+      label: "Split Left/Right",
+      action: () => tmuxSplitPane("h"),
+    },
+    {
+      icon: CTX.duplicate,
+      label: "Split Top/Bottom",
+      action: () => tmuxSplitPane("v"),
+    },
+    { separator: true },
+    {
+      icon: CTX.xmark,
+      label: "Close Tab",
+      action: () => tmuxKillWindow(win.index),
+      danger: true,
+    },
+  ];
 
-  const sep = document.createElement("div");
-  sep.className = "context-menu-separator";
-  menu.appendChild(sep);
-
-  const closeItem = document.createElement("div");
-  closeItem.className = "context-menu-item danger";
-  closeItem.innerHTML = `<span class="ctx-icon">${CTX.xmark}</span><span>Close Window</span>`;
-  closeItem.addEventListener("click", () => {
-    hideContextMenu();
-    tmuxKillWindow(win.index);
+  items.forEach((item) => {
+    if (item.separator) {
+      const sep = document.createElement("div");
+      sep.className = "context-menu-separator";
+      menu.appendChild(sep);
+      return;
+    }
+    const el = document.createElement("div");
+    el.className = "context-menu-item" + (item.danger ? " danger" : "");
+    el.innerHTML = `<span class="ctx-icon">${item.icon}</span><span>${item.label}</span>`;
+    el.addEventListener("click", () => {
+      hideContextMenu();
+      item.action();
+    });
+    menu.appendChild(el);
   });
-  menu.appendChild(closeItem);
 
   document.body.appendChild(menu);
 

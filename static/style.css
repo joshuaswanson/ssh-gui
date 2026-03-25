@@ -1520,15 +1520,14 @@ body {
 .tmux-bar {
   display: flex;
   align-items: center;
-  height: 32px;
-  background: var(--bg-secondary);
+  height: 30px;
+  background: var(--bg-tertiary);
   border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 0 4px;
-  gap: 2px;
+  padding: 0 6px;
+  gap: 4px;
 }
 
 .tmux-tabs {
@@ -1542,72 +1541,55 @@ body {
 .tmux-tab {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
-  font-size: 12px;
-  font-family: var(--font-mono);
-  color: var(--text-secondary);
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 6px;
+  border: none;
+  border-radius: 5px;
   cursor: pointer;
   white-space: nowrap;
   transition:
-    background 0.1s ease,
-    color 0.1s ease,
-    border-color 0.1s ease;
+    background 0.1s,
+    color 0.1s;
   flex-shrink: 0;
 }
 
 .tmux-tab:hover {
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   color: var(--text-primary);
 }
 
 .tmux-tab.active {
-  background: var(--accent-bg);
+  background: var(--bg-secondary);
   color: var(--accent);
-  border-color: var(--accent);
 }
 
-.tmux-tab-close {
-  display: none;
-  width: 14px;
-  height: 14px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1;
-  padding: 0;
-  border-radius: 3px;
-  align-items: center;
-  justify-content: center;
-}
-
-.tmux-tab:hover .tmux-tab-close {
+.tmux-tab-icon {
   display: flex;
+  align-items: center;
+  opacity: 0.5;
 }
 
-.tmux-tab-close:hover {
-  background: var(--bg-hover);
-  color: var(--red);
+.tmux-tab.active .tmux-tab-icon {
+  opacity: 1;
+}
+
+.tmux-tab-label {
+  font-family: var(--font-mono);
 }
 
 .tmux-pane-badge {
   font-size: 9px;
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   color: var(--text-muted);
-  padding: 0 4px;
+  padding: 1px 5px;
   border-radius: 8px;
-  line-height: 14px;
-  min-width: 14px;
-  text-align: center;
 }
 
 .tmux-tab.active .tmux-pane-badge {
-  background: rgba(56, 139, 253, 0.3);
+  background: rgba(56, 139, 253, 0.2);
   color: var(--accent);
 }
 
@@ -1615,44 +1597,21 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 16px;
   flex-shrink: 0;
-  transition:
-    background 0.1s ease,
-    color 0.1s ease;
+  opacity: 0.5;
 }
 
 .tmux-add-btn:hover {
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   color: var(--text-primary);
-}
-
-.tmux-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: auto;
-  flex-shrink: 0;
-  padding-left: 8px;
-}
-
-.tmux-actions .btn-icon {
-  padding: 4px;
-}
-
-.tmux-session-label {
-  font-size: 10px;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  padding: 0 6px;
-  flex-shrink: 0;
+  opacity: 1;
 }
 
 /* ── Package Panel ───────────────────────────────────────────────── */
