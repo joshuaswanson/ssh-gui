@@ -1232,6 +1232,18 @@ def tmux_kill_pane():
     return jsonify({"status": "ok"})
 
 
+@app.route("/api/tmux/detach", methods=["POST"])
+def tmux_detach():
+    """Detach the terminal from tmux by sending detach key sequence to the shell channel."""
+    channel = ssh_state.get("channel")
+    if channel and not channel.closed:
+        # Send Ctrl+B then d with a small gap
+        channel.send(b"\x02")
+        time.sleep(0.05)
+        channel.send(b"d")
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/tmux/new-window", methods=["POST"])
 def tmux_new_window():
     if not ssh_state["client"]:

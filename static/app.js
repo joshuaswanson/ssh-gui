@@ -4261,13 +4261,16 @@ function renderTmuxBar() {
   const shellTab = document.createElement("div");
   shellTab.className = "tmux-tab" + (!state.tmux.inTmux ? " active" : "");
   shellTab.innerHTML = `<span class="tmux-tab-label">Shell</span>`;
-  shellTab.addEventListener("click", () => {
-    if (state.socket) {
-      // Send Ctrl+B then d (tmux detach keybinding)
-      state.socket.emit("terminal_input", { data: "\x02d" });
-      state.tmux.inTmux = false;
-      renderTmuxBar();
-    }
+  shellTab.addEventListener("click", async () => {
+    // Detach via backend command (more reliable than sending keystrokes)
+    try {
+      await fetch("/api/tmux/detach", {
+        method: "POST",
+        headers: connHeaders(),
+      });
+    } catch {}
+    state.tmux.inTmux = false;
+    renderTmuxBar();
   });
   tabs.appendChild(shellTab);
 
