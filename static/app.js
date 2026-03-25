@@ -41,6 +41,7 @@ const state = {
 };
 
 let selectGeneration = 0;
+let navAbortController = null;
 
 // ── Cache ───────────────────────────────────────────────────────────
 
@@ -100,15 +101,17 @@ function checkDisconnected(data, status) {
   return false;
 }
 
-async function cachedPost(url, body, ttlMs) {
+async function cachedPost(url, body, ttlMs, signal) {
   const cached = apiCache.get(url, body);
   if (cached) return cached;
 
-  const resp = await fetch(url, {
+  const opts = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
+  };
+  if (signal) opts.signal = signal;
+  const resp = await fetch(url, opts);
   const data = await resp.json();
   if (checkDisconnected(data, resp.status)) return data;
   if (resp.ok) apiCache.set(url, body, data, ttlMs);
@@ -587,8 +590,11 @@ async function handleDisconnect() {
 // ── File Browser ─────────────────────────────────────────────────────
 
 async function navigateTo(path) {
+  if (navAbortController) navAbortController.abort();
+  navAbortController = new AbortController();
+  const signal = navAbortController.signal;
   try {
-    const data = await cachedPost("/api/ls", { path }, 30000);
+    const data = await cachedPost("/api/ls", { path }, 30000, signal);
     if (data.error) {
       showNotification(data.error || "Failed to list directory", "error");
       return;
@@ -612,6 +618,7 @@ async function navigateTo(path) {
     fetchGitBranch(data.path);
     if (state.sortMode === "creator") fetchColumnAuthors();
   } catch (e) {
+    if (e.name === "AbortError") return;
     showNotification("Failed to browse: " + e.message, "error");
   }
 }
@@ -641,6 +648,9 @@ function navigateHome() {
 }
 
 async function selectEntry(colIndex, entry, opts = {}) {
+  if (navAbortController) navAbortController.abort();
+  navAbortController = new AbortController();
+  const signal = navAbortController.signal;
   const gen = ++selectGeneration;
   const column = state.columns[colIndex];
   const entries = getVisibleEntries(column);
@@ -673,7 +683,12 @@ async function selectEntry(colIndex, entry, opts = {}) {
     renderColumns();
 
     try {
-      const data = await cachedPost("/api/ls", { path: newPath }, 30000);
+      const data = await cachedPost(
+        "/api/ls",
+        { path: newPath },
+        30000,
+        signal,
+      );
 
       if (gen !== selectGeneration) return; // stale
 
@@ -702,7 +717,7 @@ async function selectEntry(colIndex, entry, opts = {}) {
         });
       }
     } catch (e) {
-      if (gen !== selectGeneration) return;
+      if (e.name === "AbortError" || gen !== selectGeneration) return;
       state.columns = state.columns.slice(0, colIndex + 1);
       state.columns.push({
         path: newPath,
