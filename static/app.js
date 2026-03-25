@@ -4218,14 +4218,8 @@ async function refreshTmuxState() {
       return;
     }
 
-    // Enable tmux mouse mode for proper scrolling (once, via backend)
     if (!state.tmux.attached && status.session) {
       state.tmux.attached = true;
-      fetch("/api/run-command", {
-        method: "POST",
-        headers: connHeaders(),
-        body: JSON.stringify({ command: "tmux set -g mouse on" }),
-      }).catch(() => {});
     }
 
     const [windowsResp, panesResp] = await Promise.all([
