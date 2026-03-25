@@ -30,6 +30,9 @@ const state = {
   historyPaused: false,
   search: { active: false, query: "" },
   editing: { active: false, path: null, originalContent: null },
+  quickLook: { active: false, path: null },
+  undoStack: [],
+  fileWatcher: null,
   packagePanel: {
     open: false,
     packages: [],
@@ -171,6 +174,7 @@ async function init() {
   setupResizeHandle();
   setupKeyboardNavigation();
   setupGlobalShortcuts();
+  setupClipboardPaste();
   window.addEventListener("resize", handleWindowResize);
 }
 
@@ -556,6 +560,8 @@ function onConnected(data) {
   navigateTo(data.home_dir);
   initTerminal();
   startTmuxPolling();
+  startFileWatcher();
+  setTimeout(setupDragSelection, 100);
 }
 
 async function handleDisconnect() {
@@ -581,8 +587,10 @@ async function handleDisconnect() {
   }
 
   stopTmuxPolling();
+  stopFileWatcher();
   closePackageManager();
   apiCache.clear();
+  state.undoStack = [];
 
   showScreen("connect");
 }
@@ -1475,6 +1483,7 @@ async function handleDrop(e, destDir) {
         body: JSON.stringify({ src, dest }),
       });
       if (!resp.ok) errors++;
+      else pushUndo({ type: "move", src, dest });
     } catch {
       errors++;
     }
@@ -1580,6 +1589,18 @@ function updateBreadcrumb() {
       e.dataTransfer.effectAllowed = "copyMove";
     });
     breadcrumb.appendChild(partEl);
+
+    // Dropdown chevron for sibling directory navigation
+    const parentPath =
+      partIdx === 0 ? "/" : "/" + parts.slice(0, partIdx).join("/");
+    const chevron = document.createElement("span");
+    chevron.className = "breadcrumb-chevron";
+    chevron.innerHTML = "&#x25BE;";
+    chevron.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      showBreadcrumbDropdown(chevron, parentPath, part);
+    });
+    breadcrumb.appendChild(chevron);
   });
 
   updatePathBar();
@@ -2303,6 +2324,29 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
   const items = [];
 
   if (isMulti) {
+    if (selectedCount === 2) {
+      const names = [...column.selected];
+      const paths = names.map((n) =>
+        column.path === "/" ? "/" + n : column.path + "/" + n,
+      );
+      const allFiles = names.every((n) => {
+        const e = column.entries.find((x) => x.name === n);
+        return e && !e.is_dir;
+      });
+      if (allFiles) {
+        items.push({
+          icon: CTX.copyPath,
+          label: "Compare Files",
+          action: () => showDiffView(paths[0], paths[1]),
+        });
+      }
+    }
+    items.push({
+      icon: CTX.rename,
+      label: "Batch Rename...",
+      action: () => showBatchRenameDialog(colIndex),
+    });
+    items.push({ separator: true });
     items.push({
       icon: CTX.trash,
       label: `Delete ${selectedCount} items`,
@@ -2362,6 +2406,11 @@ function showContextMenu(x, y, colIndex, entry, fullPath) {
         icon: CTX.rename,
         label: "Rename",
         action: () => startRename(colIndex, entry.name),
+      },
+      {
+        icon: CTX.xmark,
+        label: "Run Command...",
+        action: () => showCustomCommandDialog([fullPath], column.path),
       },
       { separator: true },
       {
@@ -2608,6 +2657,8 @@ async function commitRename(colIndex, oldName, newName) {
     if (!resp.ok) {
       const err = await resp.json();
       showNotification(err.error || "Rename failed", "error");
+    } else {
+      pushUndo({ type: "rename", src: oldPath, dest: newPath });
     }
   } catch (e) {
     showNotification("Rename failed: " + e.message, "error");
@@ -2718,34 +2769,60 @@ function renderSearchBar() {
 
 // ── File Upload ──────────────────────────────────────────────────────
 
-async function handleFileUpload(files, destDir) {
+function handleFileUpload(files, destDir) {
   const formData = new FormData();
   formData.append("dest_dir", destDir);
   for (const file of files) {
     formData.append("files", file);
   }
 
-  showNotification(`Uploading ${files.length} file(s)...`, "info");
-
-  try {
-    const resp = await fetch("/api/upload", {
-      method: "POST",
-      body: formData,
-    });
-    const data = await resp.json();
-    if (data.error) {
-      showNotification(data.error, "error");
-    } else {
-      const count = data.uploaded ? data.uploaded.length : 0;
-      showNotification(`Uploaded ${count} file(s)`, "success");
-      if (data.errors) {
-        showNotification(data.errors.join("; "), "error");
-      }
-    }
-  } catch (e) {
-    showNotification("Upload failed: " + e.message, "error");
+  // Create progress bar
+  let progressEl = document.getElementById("upload-progress");
+  if (!progressEl) {
+    progressEl = document.createElement("div");
+    progressEl.id = "upload-progress";
+    progressEl.className = "upload-progress";
+    document.body.appendChild(progressEl);
   }
-  await refreshColumns();
+  progressEl.innerHTML = `
+    <div class="upload-progress-text">Uploading ${files.length} file(s)...</div>
+    <div class="upload-progress-track"><div class="upload-progress-bar" id="upload-bar"></div></div>`;
+  progressEl.style.display = "flex";
+
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+        const bar = document.getElementById("upload-bar");
+        if (bar) bar.style.width = pct + "%";
+        const text = progressEl.querySelector(".upload-progress-text");
+        if (text) text.textContent = `Uploading... ${pct}%`;
+      }
+    };
+    xhr.onload = () => {
+      progressEl.style.display = "none";
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (data.error) showNotification(data.error, "error");
+        else
+          showNotification(
+            `Uploaded ${data.uploaded?.length || 0} file(s)`,
+            "success",
+          );
+      } catch {
+        showNotification("Upload completed", "success");
+      }
+      refreshColumns().then(resolve);
+    };
+    xhr.onerror = () => {
+      progressEl.style.display = "none";
+      showNotification("Upload failed", "error");
+      resolve();
+    };
+    xhr.open("POST", "/api/upload");
+    xhr.send(formData);
+  });
 }
 
 function triggerUpload(destDir) {
@@ -2844,8 +2921,29 @@ function setupGlobalShortcuts() {
         return;
       }
 
+      // Cmd+G -- go to path
+      if (e.metaKey && e.key === "g") {
+        e.preventDefault();
+        showGoToPathDialog();
+        return;
+      }
+
       // Skip remaining shortcuts if in terminal or input
       if (isTerminal || isInput) return;
+
+      // Cmd+Z -- undo
+      if (e.metaKey && e.key === "z") {
+        e.preventDefault();
+        undoLastAction();
+        return;
+      }
+
+      // Spacebar -- Quick Look
+      if (e.key === " " && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        toggleQuickLook();
+        return;
+      }
 
       // Cmd+[ -- back
       if (e.metaKey && e.key === "[") {
@@ -2904,6 +3002,635 @@ function getSelectedEntryInfo() {
   if (!entry) return null;
   const fullPath = col.path === "/" ? "/" + name : col.path + "/" + name;
   return { colIndex: fc, entry, fullPath };
+}
+
+// ── Go to Path (Cmd+G) ───────────────────────────────────────────────
+
+function showGoToPathDialog() {
+  if (document.getElementById("goto-overlay")) return;
+  const currentPath =
+    state.columns.length > 0
+      ? state.columns[state.columns.length - 1].path || ""
+      : "";
+  const overlay = document.createElement("div");
+  overlay.id = "goto-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-dialog goto-dialog">
+      <div class="modal-title">Go to Path</div>
+      <input id="goto-input" class="modal-input" type="text" value="${escapeAttr(currentPath)}" placeholder="/path/to/directory" />
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+  const input = document.getElementById("goto-input");
+  input.select();
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") {
+      overlay.remove();
+      navigateTo(input.value.trim());
+    }
+    if (e.key === "Escape") overlay.remove();
+  });
+}
+
+// ── Clipboard Paste Upload ───────────────────────────────────────────
+
+function setupClipboardPaste() {
+  document.addEventListener("paste", (e) => {
+    if (!state.connected) return;
+    const tag = document.activeElement?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (document.activeElement?.closest("#terminal-container")) return;
+    const files = e.clipboardData?.files;
+    if (!files || files.length === 0) return;
+    const col = state.columns[state.focusedColumn];
+    if (!col || !col.path) return;
+    e.preventDefault();
+    handleFileUpload(files, col.path);
+  });
+}
+
+// ── Column Width Persistence ─────────────────────────────────────────
+
+function getDefaultColumnWidth() {
+  return parseInt(localStorage.getItem("defaultColumnWidth") || "240", 10);
+}
+
+function setDefaultColumnWidth(w) {
+  localStorage.setItem("defaultColumnWidth", String(Math.round(w)));
+}
+
+// ── File Watcher ─────────────────────────────────────────────────────
+
+function startFileWatcher() {
+  if (state.fileWatcher) return;
+  state.fileWatcher = setInterval(pollFileChanges, 5000);
+}
+
+function stopFileWatcher() {
+  if (state.fileWatcher) {
+    clearInterval(state.fileWatcher);
+    state.fileWatcher = null;
+  }
+}
+
+async function pollFileChanges() {
+  if (!state.connected || state.columns.length === 0) return;
+  const paths = [];
+  for (const col of state.columns) {
+    if (!col.path || col.fileInfo || col.filePreview || col.loading) continue;
+    const maxMtime = col.entries.reduce((m, e) => Math.max(m, e.mtime || 0), 0);
+    paths.push({ path: col.path, mtime: maxMtime });
+  }
+  if (paths.length === 0) return;
+  try {
+    const data = await cachedPost("/api/check-modified", { paths }, 0);
+    if (data.changed && data.changed.length > 0) {
+      apiCache.invalidateUrl("/api/ls");
+      apiCache.invalidateUrl("/api/dir-sizes");
+      await refreshColumns();
+    }
+  } catch {}
+}
+
+// ── Quick Look (Spacebar) ────────────────────────────────────────────
+
+async function toggleQuickLook() {
+  if (state.quickLook.active) {
+    hideQuickLook();
+    return;
+  }
+  const info = getSelectedEntryInfo();
+  if (!info || info.entry.is_dir) return;
+  state.quickLook = { active: true, path: info.fullPath };
+  try {
+    const data = await cachedPost(
+      "/api/preview",
+      { path: info.fullPath },
+      120000,
+    );
+    if (!state.quickLook.active) return;
+    showQuickLookModal(data, info.entry.name);
+  } catch {
+    hideQuickLook();
+  }
+}
+
+function showQuickLookModal(data, name) {
+  let body;
+  if (data.image) {
+    body = `<img class="ql-image" src="data:${data.mime};base64,${data.data}" />`;
+  } else if (data.pdf) {
+    body = `<iframe class="ql-pdf" src="data:application/pdf;base64,${data.data}"></iframe>`;
+  } else if (data.binary) {
+    body = '<div class="ql-message">Binary file</div>';
+  } else if (data.content != null) {
+    body = `<pre class="ql-code">${escapeHtml(data.content)}</pre>`;
+  } else if (data.error) {
+    body = `<div class="ql-message">${escapeHtml(data.error)}</div>`;
+  } else {
+    body = '<div class="ql-message">No preview</div>';
+  }
+  const overlay = document.createElement("div");
+  overlay.id = "quicklook-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="ql-panel">
+      <div class="ql-header"><span>${escapeHtml(name)}</span><button class="btn btn-icon" onclick="hideQuickLook()">${CTX.xmark}</button></div>
+      <div class="ql-body">${body}</div>
+    </div>`;
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) hideQuickLook();
+  });
+  document.body.appendChild(overlay);
+}
+
+function hideQuickLook() {
+  state.quickLook = { active: false, path: null };
+  const el = document.getElementById("quicklook-overlay");
+  if (el) el.remove();
+}
+
+// ── Undo Stack ───────────────────────────────────────────────────────
+
+function pushUndo(action) {
+  state.undoStack.push(action);
+  if (state.undoStack.length > 30) state.undoStack.shift();
+}
+
+async function undoLastAction() {
+  const action = state.undoStack.pop();
+  if (!action) {
+    showNotification("Nothing to undo", "info");
+    return;
+  }
+  try {
+    if (action.type === "rename" || action.type === "move") {
+      await fetch("/api/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ src: action.dest, dest: action.src }),
+      });
+      showNotification(`Undid ${action.type}`, "success");
+    } else if (action.type === "delete") {
+      showNotification("Cannot undo delete", "error");
+      return;
+    }
+  } catch (e) {
+    showNotification("Undo failed: " + e.message, "error");
+    return;
+  }
+  await refreshColumns();
+}
+
+// ── Breadcrumb Dropdown ──────────────────────────────────────────────
+
+async function showBreadcrumbDropdown(segmentEl, parentPath, currentName) {
+  hideContextMenu();
+  try {
+    const data = await cachedPost("/api/ls", { path: parentPath }, 30000);
+    if (data.error) return;
+    const dirs = data.entries
+      .filter((e) => e.is_dir)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (dirs.length === 0) return;
+
+    const menu = document.createElement("div");
+    menu.className = "context-menu";
+    menu.id = "context-menu";
+    menu.style.maxHeight = "300px";
+    menu.style.overflowY = "auto";
+
+    dirs.forEach((d) => {
+      const el = document.createElement("div");
+      el.className =
+        "context-menu-item" + (d.name === currentName ? " active" : "");
+      el.innerHTML = `<span class="ctx-icon">${FOLDER_ICON.replace('width="16"', 'width="14"').replace('height="16"', 'height="14"')}</span><span>${escapeHtml(d.name)}</span>`;
+      el.addEventListener("click", () => {
+        hideContextMenu();
+        const newPath =
+          parentPath === "/" ? "/" + d.name : parentPath + "/" + d.name;
+        navigateTo(newPath);
+      });
+      menu.appendChild(el);
+    });
+
+    document.body.appendChild(menu);
+    const rect = segmentEl.getBoundingClientRect();
+    menu.style.left = rect.left + "px";
+    menu.style.top = rect.bottom + 2 + "px";
+    if (rect.left + menu.offsetWidth > window.innerWidth) {
+      menu.style.left = window.innerWidth - menu.offsetWidth - 8 + "px";
+    }
+    registerContextMenuDismiss();
+  } catch {}
+}
+
+// ── Custom Commands ──────────────────────────────────────────────────
+
+function showCustomCommandDialog(paths, cwd) {
+  const overlay = document.createElement("div");
+  overlay.id = "command-overlay";
+  overlay.className = "modal-overlay";
+  const recentCmds = JSON.parse(localStorage.getItem("recentCommands") || "[]");
+  const recentHtml = recentCmds
+    .map(
+      (c) =>
+        `<div class="command-history-item" data-cmd="${escapeAttr(c)}">${escapeHtml(c)}</div>`,
+    )
+    .join("");
+  overlay.innerHTML = `
+    <div class="modal-dialog command-dialog">
+      <div class="modal-title">Run Command</div>
+      <p class="modal-hint">Use {} for selected file paths</p>
+      <input id="command-input" class="modal-input" type="text" placeholder="e.g. wc -l {}" />
+      ${recentHtml ? `<div class="command-history">${recentHtml}</div>` : ""}
+      <pre id="command-output" class="command-output" style="display:none"></pre>
+      <div class="modal-actions">
+        <button class="btn btn-save" id="command-run-btn">Run</button>
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('command-overlay').remove()">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+  const input = document.getElementById("command-input");
+  input.focus();
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") runCommandFromDialog(paths, cwd);
+    if (e.key === "Escape") overlay.remove();
+  });
+  document
+    .getElementById("command-run-btn")
+    .addEventListener("click", () => runCommandFromDialog(paths, cwd));
+  overlay.querySelectorAll(".command-history-item").forEach((el) => {
+    el.addEventListener("click", () => {
+      input.value = el.dataset.cmd;
+    });
+  });
+}
+
+async function runCommandFromDialog(paths, cwd) {
+  const input = document.getElementById("command-input");
+  const output = document.getElementById("command-output");
+  const cmd = input.value.trim();
+  if (!cmd) return;
+  // Save to recent
+  const recent = JSON.parse(localStorage.getItem("recentCommands") || "[]");
+  if (!recent.includes(cmd)) {
+    recent.unshift(cmd);
+    if (recent.length > 10) recent.pop();
+  }
+  localStorage.setItem("recentCommands", JSON.stringify(recent));
+  output.style.display = "block";
+  output.textContent = "Running...";
+  try {
+    const resp = await fetch("/api/run-command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: cmd, paths, cwd }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      output.textContent = data.error;
+    } else {
+      output.textContent =
+        (data.stdout || "") + (data.stderr ? "\n" + data.stderr : "");
+    }
+  } catch (e) {
+    output.textContent = "Error: " + e.message;
+  }
+}
+
+// ── Diff View ────────────────────────────────────────────────────────
+
+async function showDiffView(pathA, pathB) {
+  try {
+    const data = await fetch("/api/diff", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path_a: pathA, path_b: pathB }),
+    }).then((r) => r.json());
+    if (data.error) {
+      showNotification(data.error, "error");
+      return;
+    }
+
+    const overlay = document.createElement("div");
+    overlay.id = "diff-overlay";
+    overlay.className = "modal-overlay";
+
+    const linesA = data.content_a.split("\n");
+    const linesB = data.content_b.split("\n");
+    const maxLines = Math.max(linesA.length, linesB.length);
+    let colA = "",
+      colB = "";
+    for (let i = 0; i < maxLines; i++) {
+      const lineA = linesA[i] !== undefined ? escapeHtml(linesA[i]) : "";
+      const lineB = linesB[i] !== undefined ? escapeHtml(linesB[i]) : "";
+      const cls = linesA[i] !== linesB[i] ? " diff-changed" : "";
+      colA += `<div class="diff-line${cls}"><span class="diff-num">${i + 1}</span>${lineA}</div>`;
+      colB += `<div class="diff-line${cls}"><span class="diff-num">${i + 1}</span>${lineB}</div>`;
+    }
+
+    overlay.innerHTML = `
+      <div class="diff-panel">
+        <div class="diff-header">
+          <span>${escapeHtml(data.name_a)} vs ${escapeHtml(data.name_b)}</span>
+          <button class="btn btn-icon" onclick="document.getElementById('diff-overlay').remove()">${CTX.xmark}</button>
+        </div>
+        <div class="diff-body">
+          <div class="diff-column"><div class="diff-col-header">${escapeHtml(data.name_a)}</div>${colA}</div>
+          <div class="diff-column"><div class="diff-col-header">${escapeHtml(data.name_b)}</div>${colB}</div>
+        </div>
+      </div>`;
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    document.body.appendChild(overlay);
+  } catch (e) {
+    showNotification("Diff failed: " + e.message, "error");
+  }
+}
+
+// ── Batch Rename ─────────────────────────────────────────────────────
+
+function showBatchRenameDialog(colIndex) {
+  const col = state.columns[colIndex];
+  if (!col) return;
+  const names = [...col.selected];
+  if (names.length < 2) return;
+
+  const overlay = document.createElement("div");
+  overlay.id = "batchrename-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-dialog batch-rename-dialog">
+      <div class="modal-title">Batch Rename (${names.length} files)</div>
+      <div class="modal-hint">Find and replace in file names</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input id="br-find" class="modal-input" placeholder="Find..." style="flex:1" />
+        <input id="br-replace" class="modal-input" placeholder="Replace with..." style="flex:1" />
+      </div>
+      <div id="br-preview" class="batch-rename-preview"></div>
+      <div class="modal-actions">
+        <button class="btn btn-save" id="br-apply">Rename</button>
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('batchrename-overlay').remove()">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  const findInput = document.getElementById("br-find");
+  const replaceInput = document.getElementById("br-replace");
+  const preview = document.getElementById("br-preview");
+
+  function updatePreview() {
+    const find = findInput.value;
+    const replace = replaceInput.value;
+    if (!find) {
+      preview.innerHTML = names
+        .map((n) => `<div class="br-row">${escapeHtml(n)}</div>`)
+        .join("");
+      return;
+    }
+    preview.innerHTML = names
+      .map((n) => {
+        const newName = n.split(find).join(replace);
+        const changed = newName !== n;
+        return `<div class="br-row${changed ? " br-changed" : ""}"><span class="br-old">${escapeHtml(n)}</span><span class="br-arrow">&rarr;</span><span class="br-new">${escapeHtml(newName)}</span></div>`;
+      })
+      .join("");
+  }
+  findInput.addEventListener("input", updatePreview);
+  replaceInput.addEventListener("input", updatePreview);
+  [findInput, replaceInput].forEach((el) =>
+    el.addEventListener("keydown", (e) => e.stopPropagation()),
+  );
+  updatePreview();
+
+  document.getElementById("br-apply").addEventListener("click", async () => {
+    const find = findInput.value;
+    const replace = replaceInput.value;
+    if (!find) return;
+    const renames = [];
+    for (const n of names) {
+      const newName = n.split(find).join(replace);
+      if (newName !== n && newName) {
+        const src = col.path === "/" ? "/" + n : col.path + "/" + n;
+        const dest =
+          col.path === "/" ? "/" + newName : col.path + "/" + newName;
+        renames.push({ src, dest });
+      }
+    }
+    if (renames.length === 0) return;
+    try {
+      await fetch("/api/batch-rename", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ renames }),
+      });
+      showNotification(`Renamed ${renames.length} files`, "success");
+      for (const r of renames)
+        pushUndo({ type: "rename", src: r.src, dest: r.dest });
+    } catch (e) {
+      showNotification("Batch rename failed: " + e.message, "error");
+    }
+    overlay.remove();
+    await refreshColumns();
+  });
+  findInput.focus();
+}
+
+// ── Drag Selection Rectangle ─────────────────────────────────────────
+
+function setupDragSelection() {
+  let startX, startY, rect, colEl, colIndex;
+  const container = document.getElementById("columns");
+  if (!container) return;
+
+  container.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    // Only start if clicking on column blank space
+    const target = e.target;
+    if (!target.classList.contains("column") || target.closest(".column-entry"))
+      return;
+    colEl = target;
+    colIndex = [...container.querySelectorAll(":scope > .column")].indexOf(
+      colEl,
+    );
+    if (colIndex < 0 || colIndex >= state.columns.length) return;
+    startX = e.clientX;
+    startY = e.clientY;
+    rect = null;
+
+    const onMove = (e2) => {
+      const dx = e2.clientX - startX;
+      const dy = e2.clientY - startY;
+      if (!rect && Math.abs(dx) + Math.abs(dy) < 5) return;
+      if (!rect) {
+        rect = document.createElement("div");
+        rect.className = "selection-rect";
+        document.body.appendChild(rect);
+      }
+      const x = Math.min(startX, e2.clientX);
+      const y = Math.min(startY, e2.clientY);
+      const w = Math.abs(dx);
+      const h = Math.abs(dy);
+      rect.style.left = x + "px";
+      rect.style.top = y + "px";
+      rect.style.width = w + "px";
+      rect.style.height = h + "px";
+
+      // Select entries that intersect the rectangle
+      const selRect = { left: x, top: y, right: x + w, bottom: y + h };
+      const col = state.columns[colIndex];
+      if (!col) return;
+      col.selected = new Set();
+      const entries = getVisibleEntries(col);
+      colEl.querySelectorAll(".column-entry").forEach((el, i) => {
+        const r = el.getBoundingClientRect();
+        if (
+          r.bottom > selRect.top &&
+          r.top < selRect.bottom &&
+          r.right > selRect.left &&
+          r.left < selRect.right
+        ) {
+          if (entries[i]) col.selected.add(entries[i].name);
+          el.classList.add("selected");
+        } else {
+          el.classList.remove("selected");
+        }
+      });
+    };
+
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      if (rect) {
+        rect.remove();
+        renderColumns();
+      }
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
+}
+
+// ── SSH Key Manager ──────────────────────────────────────────────────
+
+async function showKeyManager() {
+  const overlay = document.createElement("div");
+  overlay.id = "keymanager-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-dialog key-manager-dialog">
+      <div class="modal-title">SSH Keys</div>
+      <div id="key-list" class="key-list">Loading...</div>
+      <div class="modal-actions">
+        <button class="btn btn-save" onclick="showGenerateKeyForm()">Generate New Key</button>
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('keymanager-overlay').remove()">Close</button>
+      </div>
+    </div>`;
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+  document.body.appendChild(overlay);
+  await refreshKeyList();
+}
+
+async function refreshKeyList() {
+  const list = document.getElementById("key-list");
+  if (!list) return;
+  try {
+    const data = await fetch("/api/ssh-keys").then((r) => r.json());
+    if (!data.keys || data.keys.length === 0) {
+      list.innerHTML =
+        '<div class="modal-hint">No SSH keys found in ~/.ssh/</div>';
+      return;
+    }
+    list.innerHTML = data.keys
+      .map(
+        (k) => `
+      <div class="key-row">
+        <div class="key-info">
+          <span class="key-name">${escapeHtml(k.name)}</span>
+          ${k.type ? `<span class="key-type">${escapeHtml(k.type)}</span>` : ""}
+          ${k.fingerprint ? `<div class="key-fingerprint">${escapeHtml(k.fingerprint)}</div>` : ""}
+        </div>
+        <div class="key-actions">
+          ${k.has_pub ? `<button class="btn btn-sm btn-edit" onclick="copyPublicKey('${escapeAttr(k.name)}')">Copy Public Key</button>` : ""}
+        </div>
+      </div>`,
+      )
+      .join("");
+  } catch (e) {
+    list.innerHTML = `<div class="modal-hint">Error: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function copyPublicKey(name) {
+  try {
+    const data = await fetch(
+      "/api/ssh-keys/public?name=" + encodeURIComponent(name),
+    ).then((r) => r.json());
+    if (data.content) {
+      await copyToClipboard(data.content);
+      showNotification("Public key copied", "success");
+    } else showNotification(data.error || "Failed", "error");
+  } catch (e) {
+    showNotification(e.message, "error");
+  }
+}
+
+function showGenerateKeyForm() {
+  const list = document.getElementById("key-list");
+  if (!list) return;
+  list.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <input id="keygen-name" class="modal-input" placeholder="Key name (e.g. id_ed25519)" value="id_ed25519" />
+      <select id="keygen-type" class="modal-input"><option value="ed25519">Ed25519</option><option value="rsa">RSA</option></select>
+      <input id="keygen-passphrase" class="modal-input" type="password" placeholder="Passphrase (optional)" />
+      <input id="keygen-comment" class="modal-input" placeholder="Comment (optional)" />
+      <button class="btn btn-save" onclick="generateKey()">Generate</button>
+      <button class="btn btn-secondary btn-sm" onclick="refreshKeyList()">Back</button>
+    </div>`;
+  [].forEach.call(list.querySelectorAll("input, select"), (el) =>
+    el.addEventListener("keydown", (e) => e.stopPropagation()),
+  );
+}
+
+async function generateKey() {
+  const name = document.getElementById("keygen-name").value.trim();
+  const type = document.getElementById("keygen-type").value;
+  const passphrase = document.getElementById("keygen-passphrase").value;
+  const comment = document.getElementById("keygen-comment").value.trim();
+  if (!name) {
+    showNotification("Name is required", "error");
+    return;
+  }
+  try {
+    const data = await fetch("/api/ssh-keys/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, type, passphrase, comment }),
+    }).then((r) => r.json());
+    if (data.error) {
+      showNotification(data.error, "error");
+      return;
+    }
+    showNotification("Key generated", "success");
+    await refreshKeyList();
+  } catch (e) {
+    showNotification(e.message, "error");
+  }
 }
 
 function showNotification(message, type) {

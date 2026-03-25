@@ -870,6 +870,211 @@ def git_authors():
     return jsonify({"authors": authors})
 
 
+@app.route("/api/check-modified", methods=["POST"])
+def check_modified():
+    """Check which directories have been modified since given mtimes."""
+    if not ssh_state["sftp"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    paths = request.json.get("paths", [])
+    changed = []
+    for item in paths:
+        p = item.get("path", "")
+        old_mtime = item.get("mtime", 0)
+        if not p:
+            continue
+        try:
+            s = ssh_state["sftp"].stat(p)
+            if s.st_mtime and s.st_mtime > old_mtime:
+                changed.append(p)
+        except Exception:
+            pass
+    return jsonify({"changed": changed})
+
+
+@app.route("/api/run-command", methods=["POST"])
+def run_command():
+    """Run a shell command on the remote server."""
+    if not ssh_state["client"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    data = request.json
+    command = data.get("command", "")
+    cwd = data.get("cwd", "")
+    paths = data.get("paths", [])
+
+    if not command:
+        return jsonify({"error": "command is required"}), 400
+
+    # Replace {} with each path
+    if paths:
+        quoted_paths = " ".join(shlex.quote(p) for p in paths)
+        command = command.replace("{}", quoted_paths)
+
+    if cwd:
+        command = f"cd {shlex.quote(cwd)} && {command}"
+
+    try:
+        _, stdout, stderr = ssh_state["client"].exec_command(command, timeout=30)
+        exit_code = stdout.channel.recv_exit_status()
+        out = stdout.read().decode("utf-8", errors="replace")
+        err = stderr.read().decode("utf-8", errors="replace")
+        return jsonify({"stdout": out, "stderr": err, "exit_code": exit_code})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/diff", methods=["POST"])
+def diff_files():
+    """Compare two remote files."""
+    if not ssh_state["sftp"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    path_a = request.json.get("path_a", "")
+    path_b = request.json.get("path_b", "")
+    if not path_a or not path_b:
+        return jsonify({"error": "path_a and path_b are required"}), 400
+
+    max_size = 1024 * 1024  # 1MB
+    try:
+        with ssh_state["sftp"].open(path_a, "r") as f:
+            content_a = f.read(max_size).decode("utf-8", errors="replace")
+        with ssh_state["sftp"].open(path_b, "r") as f:
+            content_b = f.read(max_size).decode("utf-8", errors="replace")
+
+        import difflib
+        diff = list(difflib.unified_diff(
+            content_a.splitlines(keepends=True),
+            content_b.splitlines(keepends=True),
+            fromfile=posixpath.basename(path_a),
+            tofile=posixpath.basename(path_b),
+        ))
+        return jsonify({
+            "diff": "".join(diff),
+            "content_a": content_a,
+            "content_b": content_b,
+            "name_a": posixpath.basename(path_a),
+            "name_b": posixpath.basename(path_b),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/batch-rename", methods=["POST"])
+def batch_rename():
+    """Rename multiple files at once."""
+    if not ssh_state["sftp"]:
+        return jsonify({"error": "Not connected"}), 400
+
+    renames = request.json.get("renames", [])
+    if not renames:
+        return jsonify({"error": "renames is required"}), 400
+
+    results = []
+    for item in renames:
+        src = item.get("src", "")
+        dest = item.get("dest", "")
+        if not src or not dest:
+            continue
+        try:
+            ssh_state["sftp"].rename(src, dest)
+            results.append({"src": src, "dest": dest, "status": "ok"})
+        except Exception as e:
+            results.append({"src": src, "dest": dest, "status": "error", "error": str(e)})
+    return jsonify({"results": results})
+
+
+@app.route("/api/ssh-keys")
+def list_ssh_keys():
+    """List SSH keys on the local machine."""
+    ssh_dir = Path.home() / ".ssh"
+    if not ssh_dir.exists():
+        return jsonify({"keys": []})
+
+    keys = []
+    skip = {"config", "known_hosts", "known_hosts.old", "authorized_keys", "environment"}
+    for f in sorted(ssh_dir.iterdir()):
+        if f.is_dir() or f.name.startswith(".") or f.name in skip:
+            continue
+        if f.suffix == ".pub":
+            continue
+        # Check if it looks like a key file
+        try:
+            header = f.read_bytes()[:40]
+            if b"PRIVATE KEY" not in header and b"-----" not in header:
+                continue
+        except Exception:
+            continue
+
+        has_pub = (ssh_dir / (f.name + ".pub")).exists()
+        fingerprint = ""
+        key_type = ""
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["ssh-keygen", "-lf", str(f)],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                parts = result.stdout.strip().split()
+                if len(parts) >= 2:
+                    fingerprint = parts[1]
+                if len(parts) >= 4:
+                    key_type = parts[-1].strip("()")
+        except Exception:
+            pass
+
+        keys.append({
+            "name": f.name,
+            "path": str(f),
+            "has_pub": has_pub,
+            "fingerprint": fingerprint,
+            "type": key_type,
+        })
+
+    return jsonify({"keys": keys})
+
+
+@app.route("/api/ssh-keys/public")
+def get_public_key():
+    """Get the public key content."""
+    name = request.args.get("name", "")
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    pub_path = Path.home() / ".ssh" / (name + ".pub")
+    if not pub_path.exists():
+        return jsonify({"error": "Public key not found"}), 404
+    return jsonify({"content": pub_path.read_text().strip()})
+
+
+@app.route("/api/ssh-keys/generate", methods=["POST"])
+def generate_ssh_key():
+    """Generate a new SSH key pair."""
+    data = request.json
+    name = data.get("name", "id_ed25519")
+    key_type = data.get("type", "ed25519")
+    passphrase = data.get("passphrase", "")
+    comment = data.get("comment", "")
+
+    key_path = Path.home() / ".ssh" / name
+    if key_path.exists():
+        return jsonify({"error": f"Key '{name}' already exists"}), 400
+
+    try:
+        import subprocess
+        cmd = ["ssh-keygen", "-t", key_type, "-f", str(key_path), "-N", passphrase]
+        if comment:
+            cmd.extend(["-C", comment])
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return jsonify({"error": result.stderr.strip()}), 400
+
+        pub_content = (Path.home() / ".ssh" / (name + ".pub")).read_text().strip()
+        return jsonify({"status": "ok", "public_key": pub_content})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
 # ── Tmux ───────────────────────────────────────────────────────────
 
 
