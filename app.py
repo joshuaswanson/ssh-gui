@@ -1526,6 +1526,73 @@ def handle_terminal_start(data):
         emit("terminal_output", {"data": f"\r\nFailed to start terminal: {e}\r\n"})
 
 
+@socketio.on("terminal_switch")
+def handle_terminal_switch(data):
+    """Switch terminal between plain shell and tmux session."""
+    conn_id = data.get("connection_id")
+    conn = connections.get(conn_id) if conn_id else (list(connections.values())[-1] if connections else None)
+    if not conn or not conn["client"]:
+        return
+
+    # Close existing channel
+    old_channel = conn.get("channel")
+    if old_channel and not old_channel.closed:
+        try:
+            old_channel.close()
+        except Exception:
+            pass
+
+    sid = request.sid
+    tmux_session = data.get("tmux_session")
+    tmux_window = data.get("tmux_window")
+
+    try:
+        if tmux_session:
+            # Start shell inside tmux
+            cmd = f"tmux attach -t {shlex.quote(tmux_session)}"
+            if tmux_window is not None:
+                cmd += f"\\; select-window -t {int(tmux_window)}"
+            channel = conn["client"].get_transport().open_session()
+            channel.get_pty(
+                term="xterm-256color",
+                width=data.get("cols", 80),
+                height=data.get("rows", 24),
+            )
+            channel.exec_command(cmd)
+        else:
+            # Plain shell
+            channel = conn["client"].invoke_shell(
+                term="xterm-256color",
+                width=data.get("cols", 80),
+                height=data.get("rows", 24),
+            )
+
+        conn["channel"] = channel
+
+        def read_output():
+            try:
+                while not channel.closed:
+                    if channel.recv_ready():
+                        output = channel.recv(4096)
+                        if output:
+                            socketio.emit(
+                                "terminal_output",
+                                {"data": output.decode("utf-8", errors="replace")},
+                                to=sid,
+                            )
+                        else:
+                            break
+                    else:
+                        time.sleep(0.01)
+            except Exception:
+                pass
+
+        thread = threading.Thread(target=read_output, daemon=True)
+        thread.start()
+    except Exception as e:
+        emit("terminal_output", {"data": f"\r\nSwitch failed: {e}\r\n"})
+
+
 @socketio.on("terminal_input")
 def handle_terminal_input(data):
     channel = ssh_state.get("channel")

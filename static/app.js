@@ -4218,12 +4218,14 @@ async function refreshTmuxState() {
       return;
     }
 
-    // Enable tmux mouse mode for proper scrolling (once)
-    if (!state.tmux.attached && status.session && state.socket) {
+    // Enable tmux mouse mode for proper scrolling (once, via backend)
+    if (!state.tmux.attached && status.session) {
       state.tmux.attached = true;
-      state.socket.emit("terminal_input", {
-        data: "tmux set -g mouse on 2>/dev/null\r",
-      });
+      fetch("/api/run-command", {
+        method: "POST",
+        headers: connHeaders(),
+        body: JSON.stringify({ command: "tmux set -g mouse on" }),
+      }).catch(() => {});
     }
 
     const [windowsResp, panesResp] = await Promise.all([
@@ -4261,14 +4263,17 @@ function renderTmuxBar() {
   const shellTab = document.createElement("div");
   shellTab.className = "tmux-tab" + (!state.tmux.inTmux ? " active" : "");
   shellTab.innerHTML = `<span class="tmux-tab-label">Shell</span>`;
-  shellTab.addEventListener("click", async () => {
-    // Detach via backend command (more reliable than sending keystrokes)
-    try {
-      await fetch("/api/tmux/detach", {
-        method: "POST",
-        headers: connHeaders(),
+  shellTab.addEventListener("click", () => {
+    if (!state.tmux.inTmux) return;
+    // Switch to plain shell by opening a new channel
+    if (state.socket && state.terminal) {
+      state.terminal.clear();
+      state.socket.emit("terminal_switch", {
+        connection_id: state.connectionId,
+        cols: state.terminal.cols,
+        rows: state.terminal.rows,
       });
-    } catch {}
+    }
     state.tmux.inTmux = false;
     renderTmuxBar();
   });
@@ -4281,10 +4286,15 @@ function renderTmuxBar() {
       "tmux-tab" + (state.tmux.inTmux && win.active ? " active" : "");
     tab.innerHTML = `<span class="tmux-tab-label">${escapeHtml(win.name)}</span>`;
     tab.addEventListener("click", () => {
-      if (!state.tmux.inTmux && state.socket) {
-        // Attach to tmux and select this window
-        state.socket.emit("terminal_input", {
-          data: `tmux attach -t ${state.tmux.session}\\; select-window -t ${win.index}\r`,
+      if (!state.tmux.inTmux && state.socket && state.terminal) {
+        // Switch to tmux by opening a new channel attached to tmux
+        state.terminal.clear();
+        state.socket.emit("terminal_switch", {
+          connection_id: state.connectionId,
+          tmux_session: state.tmux.session,
+          tmux_window: win.index,
+          cols: state.terminal.cols,
+          rows: state.terminal.rows,
         });
         state.tmux.inTmux = true;
       } else {
