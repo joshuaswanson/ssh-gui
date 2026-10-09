@@ -161,7 +161,18 @@ function cdToBrowserPath() {
 
 function setupTerminalClickHandler(term) {
   // Clicking on the cursor's row moves the cursor there with arrow keys.
-  term.element.addEventListener("click", (e) => {
+  // This listens for mouseup: focusing the terminal re-renders the cursor row,
+  // and a press whose target element was replaced never produces a click event.
+  let press = null;
+  const onPress = (e) => {
+    press = e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
+  };
+  term.element.addEventListener("mousedown", onPress, true);
+  term.element.addEventListener("mouseup", (e) => {
+    const start = press;
+    press = null;
+    if (!start) return;
+    if (Math.abs(e.clientX - start.x) + Math.abs(e.clientY - start.y) > 4) return;
     if (!state.socket || state.terminalEnded) return;
     if (term.hasSelection()) return;
     // The program in the terminal handles its own mouse clicks.
