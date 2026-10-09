@@ -158,25 +158,42 @@ async function animateStarToggle(card, hostName) {
 
 // ── Connection ───────────────────────────────────────────────────────
 
+// A jump host and its target can each need confirmation, hence the loop.
+async function requestConnection(params) {
+  let body = params;
+  for (;;) {
+    const response = await fetch("/api/connect", {
+      method: "POST",
+      headers: connHeaders(),
+      body: JSON.stringify(body),
+    });
+    const data = await response.json();
+    if (data.status !== "unknown_host") return data;
+
+    const keyType = data.key_type.replace(/^ssh-/, "").toUpperCase();
+    const trusted = confirm(
+      `${data.hostname} is not in your known_hosts file.\n\n` +
+        `${keyType} key fingerprint:\n${data.fingerprint}\n\n` +
+        "Trust this host and continue connecting?",
+    );
+    if (!trusted) return { status: "error", message: "Host key not trusted" };
+    body = { ...params, trusted_fingerprint: data.fingerprint };
+  }
+}
+
 async function connectToHost(host) {
   document
     .querySelectorAll(".host-card")
     .forEach((c) => (c.style.opacity = "0.5"));
 
   try {
-    const response = await fetch("/api/connect", {
-      method: "POST",
-      headers: connHeaders(),
-      body: JSON.stringify({
-        config_host: host.name,
-        hostname: host.hostname,
-        username: host.user,
-        port: host.port,
-        key_file: host.identity_file,
-      }),
+    const data = await requestConnection({
+      config_host: host.name,
+      hostname: host.hostname,
+      username: host.user,
+      port: host.port,
+      key_file: host.identity_file,
     });
-
-    const data = await response.json();
 
     if (data.status === "connected") {
       onConnected(data);
@@ -206,19 +223,13 @@ async function handleManualConnect(event) {
   btn.textContent = "Connecting...";
 
   try {
-    const response = await fetch("/api/connect", {
-      method: "POST",
-      headers: connHeaders(),
-      body: JSON.stringify({
-        hostname,
-        username,
-        password,
-        port: parseInt(port),
-        key_file: keyFile,
-      }),
+    const data = await requestConnection({
+      hostname,
+      username,
+      password,
+      port: parseInt(port),
+      key_file: keyFile,
     });
-
-    const data = await response.json();
 
     if (data.status === "connected") {
       onConnected(data);

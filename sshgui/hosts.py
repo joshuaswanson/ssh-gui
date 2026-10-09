@@ -8,6 +8,7 @@ from .connections import (
     LOCAL_USER,
     SSH_CONFIG_PATH,
     SSH_DIR,
+    UnknownHostKey,
     body,
     close_connection,
     load_ssh_config,
@@ -82,6 +83,15 @@ def save_host():
 def connect():
     try:
         conn = open_connection(body())
+    except UnknownHostKey as e:
+        return jsonify(
+            {
+                "status": "unknown_host",
+                "hostname": e.hostname,
+                "key_type": e.key_type,
+                "fingerprint": e.fingerprint,
+            }
+        )
     except paramiko.PasswordRequiredException:
         message = "The private key is encrypted. Enter its passphrase in the Password field."
     except paramiko.BadHostKeyException as e:

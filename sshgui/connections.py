@@ -1,4 +1,6 @@
+import base64
 import getpass
+import hashlib
 import os
 import shlex
 import socket
@@ -15,6 +17,7 @@ from flask import jsonify, request
 
 SSH_DIR = Path.home() / ".ssh"
 SSH_CONFIG_PATH = SSH_DIR / "config"
+KNOWN_HOSTS_PATH = SSH_DIR / "known_hosts"
 LOCAL_USER = getpass.getuser()
 CONNECT_TIMEOUT = 30
 KEEPALIVE_SECONDS = 30
@@ -172,10 +175,40 @@ def load_ssh_config():
     return paramiko.SSHConfig()
 
 
-def _new_client():
+def key_fingerprint(key):
+    digest = hashlib.sha256(key.asbytes()).digest()
+    return "SHA256:" + base64.b64encode(digest).decode("ascii").rstrip("=")
+
+
+class UnknownHostKey(Exception):
+    def __init__(self, hostname, key):
+        super().__init__(f"Unknown host key for {hostname}")
+        self.hostname = hostname
+        self.key_type = key.get_name()
+        self.fingerprint = key_fingerprint(key)
+
+
+class ConfirmedHostKeyPolicy(paramiko.MissingHostKeyPolicy):
+    """Accept an unknown host key only when the user has confirmed its fingerprint."""
+
+    def __init__(self, trusted_fingerprint):
+        self.trusted_fingerprint = trusted_fingerprint
+
+    def missing_host_key(self, client, hostname, key):
+        if key_fingerprint(key) != self.trusted_fingerprint:
+            raise UnknownHostKey(hostname, key)
+        SSH_DIR.mkdir(mode=0o700, exist_ok=True)
+        existing = KNOWN_HOSTS_PATH.read_bytes() if KNOWN_HOSTS_PATH.exists() else b""
+        separator = "" if not existing or existing.endswith(b"\n") else "\n"
+        with open(KNOWN_HOSTS_PATH, "a") as f:
+            f.write(f"{separator}{hostname} {key.get_name()} {key.get_base64()}\n")
+        os.chmod(KNOWN_HOSTS_PATH, 0o600)
+
+
+def _new_client(trusted_fingerprint):
     client = paramiko.SSHClient()
     client.load_system_host_keys()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.set_missing_host_key_policy(ConfirmedHostKeyPolicy(trusted_fingerprint))
     return client
 
 
@@ -205,6 +238,7 @@ def open_connection(data):
     port = int(data.get("port") or 22)
     key_files = [data["key_file"]] if data.get("key_file") else []
     config_host = (data.get("config_host") or "").strip()
+    trusted_fingerprint = data.get("trusted_fingerprint") or ""
 
     jump = None
     proxy_command = None
@@ -231,7 +265,7 @@ def open_connection(data):
     try:
         sock = None
         if jump:
-            jump_client = _new_client()
+            jump_client = _new_client(trusted_fingerprint)
             jump_kwargs = {
                 "hostname": jump["hostname"],
                 "port": jump["port"],
@@ -250,7 +284,7 @@ def open_connection(data):
         elif proxy_command:
             proxy = sock = paramiko.ProxyCommand(proxy_command)
 
-        client = _new_client()
+        client = _new_client(trusted_fingerprint)
         kwargs = {
             "hostname": hostname,
             "port": port,
