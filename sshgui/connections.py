@@ -25,10 +25,13 @@ KEEPALIVE_SECONDS = 30
 # Non-interactive shells often skip the profile lines that add these to PATH.
 USER_BIN_PATH = 'PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH:/opt/homebrew/bin:/usr/local/bin"; '
 
-# `t SECONDS cmd...` limits cmd with coreutils timeout where it exists.
+# `t SECONDS cmd...` stops cmd after SECONDS. macOS and BSD hosts have no
+# coreutils timeout, so the fallback kills cmd from a background watcher.
 TIMEOUT_FN = (
-    't() { if command -v timeout >/dev/null 2>&1; then timeout "$@"; '
-    'else shift; "$@"; fi; }; '
+    't() { if command -v timeout >/dev/null 2>&1; then timeout "$@"; return; fi; '
+    's=$1; shift; "$@" & p=$!; '
+    '( sleep "$s"; kill "$p" ) >/dev/null 2>&1 & w=$!; '
+    'wait "$p"; r=$?; kill "$w" >/dev/null 2>&1; return $r; }; '
 )
 
 _connections = {}

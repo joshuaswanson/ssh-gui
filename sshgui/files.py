@@ -26,6 +26,7 @@ MAX_TEXT_BYTES = 64 * 1024
 MAX_DIFF_BYTES = 1024 * 1024
 DOWNLOAD_CHUNK_BYTES = 256 * 1024
 DU_SECONDS_PER_DIR = 5
+DU_SECONDS_TOTAL = 30
 SEARCH_SECONDS = 15
 SEARCH_MAX_RESULTS = 200
 
@@ -120,15 +121,14 @@ def get_dir_sizes(conn):
         TIMEOUT_FN,
         "if du -sb /dev/null >/dev/null 2>&1; then f=-sb; echo unit 1; "
         "else f=-sk; echo unit 1024; fi",
+        "start=$(date +%s)",
+        f"d() {{ [ $(( $(date +%s) - start )) -ge {DU_SECONDS_TOTAL} ] && return 0; "
+        f'echo "$1 $(t {DU_SECONDS_PER_DIR} du $f -- "$2" 2>/dev/null | cut -f1)"; }}',
     ]
     for i, name in enumerate(names):
-        quoted = shlex.quote(posixpath.join(path, name))
-        script.append(
-            f'echo "{i} $(t {DU_SECONDS_PER_DIR} du $f -- {quoted} 2>/dev/null | cut -f1)"'
-        )
-    timeout = min(300, DU_SECONDS_PER_DIR * len(names) + 15)
+        script.append(f"d {i} {shlex.quote(posixpath.join(path, name))}")
     try:
-        output = conn.run("\n".join(script), timeout=timeout).out
+        output = conn.run("\n".join(script), timeout=DU_SECONDS_TOTAL + 20).out
     except TimeoutError:
         return jsonify({"sizes": {}})
 

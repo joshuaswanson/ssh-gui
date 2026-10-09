@@ -637,7 +637,7 @@ function renderColumns() {
       let rightContent;
       if (entry.is_dir) {
         const dirSizeStr =
-          entry.dirSize !== undefined ? formatSize(entry.dirSize) : "--";
+          entry.dirSize != null ? formatSize(entry.dirSize) : "--";
         rightContent = `<span class="entry-size">${dirSizeStr}</span><span class="entry-chevron">&#x203A;</span>`;
       } else {
         rightContent = `<span class="entry-size">${formatSize(entry.size)}</span>`;
@@ -912,10 +912,10 @@ async function handleDrop(e, destDir) {
   await refreshColumns();
 }
 
-async function refreshColumns() {
-  // Invalidate ls and dir-sizes cache so re-fetches hit the server
+// keepSizes carries known folder sizes over, so only new folders are measured.
+async function refreshColumns({ keepSizes = false } = {}) {
   apiCache.invalidateUrl("/api/ls");
-  apiCache.invalidateUrl("/api/dir-sizes");
+  if (!keepSizes) apiCache.invalidateUrl("/api/dir-sizes");
   // Re-fetch all directory columns to reflect moves
   for (let i = 0; i < state.columns.length; i++) {
     const col = state.columns[i];
@@ -928,6 +928,12 @@ async function refreshColumns() {
       });
       if (resp.ok) {
         const data = await resp.json();
+        if (keepSizes) {
+          const known = new Map(col.entries.map((e) => [e.name, e.dirSize]));
+          for (const entry of data.entries) {
+            if (entry.is_dir) entry.dirSize = known.get(entry.name);
+          }
+        }
         col.entries = data.entries;
         col.mtime = data.mtime;
         // Remove selected entries that no longer exist
@@ -1158,6 +1164,8 @@ function toggleHiddenFiles() {
 
 // ── Directory Sizes ─────────────────────────────────────────────────
 
+const dirSizeRequests = new Set();
+
 async function fetchDirSizes(colIndex) {
   const column = state.columns[colIndex];
   if (
@@ -1169,9 +1177,16 @@ async function fetchDirSizes(colIndex) {
   )
     return;
 
-  const dirNames = column.entries.filter((e) => e.is_dir).map((e) => e.name);
+  const dirNames = column.entries
+    .filter((e) => e.is_dir && e.dirSize === undefined)
+    .map((e) => e.name);
   if (dirNames.length === 0) return;
 
+  // A slow du must never run twice for one folder: each request holds one of
+  // the browser's six connections to the server until it returns.
+  const requestKey = state.connectionId + "|" + column.path;
+  if (dirSizeRequests.has(requestKey)) return;
+  dirSizeRequests.add(requestKey);
   column.sizesLoaded = true;
 
   try {
@@ -1188,15 +1203,19 @@ async function fetchDirSizes(colIndex) {
       )
         return;
 
+      // null marks a folder that was too slow to measure, so it is not retried.
+      const requested = new Set(dirNames);
       for (const entry of column.entries) {
-        if (entry.is_dir && data.sizes[entry.name] !== undefined) {
-          entry.dirSize = data.sizes[entry.name];
+        if (entry.is_dir && requested.has(entry.name)) {
+          entry.dirSize = data.sizes[entry.name] ?? null;
         }
       }
       renderColumns();
     }
   } catch {
     // silently fail
+  } finally {
+    dirSizeRequests.delete(requestKey);
   }
 }
 
@@ -1442,9 +1461,7 @@ async function pollFileChanges() {
   try {
     const data = await cachedPost("/api/check-modified", { paths }, 0);
     if (data.changed && data.changed.length > 0) {
-      apiCache.invalidateUrl("/api/ls");
-      apiCache.invalidateUrl("/api/dir-sizes");
-      await refreshColumns();
+      await refreshColumns({ keepSizes: true });
     }
   } catch {}
 }
