@@ -2313,3 +2313,32 @@ body {
   align-items: center;
   gap: 8px;
 }
+
+/* ── Subfolder Search Results ────────────────────────────────────── */
+
+.search-results {
+  min-width: 360px;
+  max-width: min(720px, calc(100vw - 32px));
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.search-results-header {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.search-result-name {
+  white-space: nowrap;
+}
+
+.search-result-path {
+  margin-left: auto;
+  padding-left: 16px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
