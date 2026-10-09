@@ -138,6 +138,11 @@ body {
   margin-bottom: 24px;
 }
 
+.connect-logo {
+  display: block;
+  margin: 0 auto 14px;
+}
+
 .connect-header h1 {
   font-size: 28px;
   font-weight: 600;
