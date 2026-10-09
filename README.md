@@ -1,6 +1,8 @@
-# SSH GUI
+<p align="center">
+  <img src="static/logo-wordmark.svg" alt="SSH GUI" width="360">
+</p>
 
-A Finder-style GUI for remote servers. Browse and manage files over SSH in a column view, with a full terminal below.
+<p align="center">A Finder-style GUI for remote servers. Browse and manage files over SSH in a column view, with a full terminal below.</p>
 
 ## Setup
 
