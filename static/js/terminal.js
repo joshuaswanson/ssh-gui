@@ -75,6 +75,10 @@ function startTerminalSession() {
   state.socket = io();
 
   state.socket.on("connect", () => {
+    // A reconnect starts a plain shell, so drop tmux's mouse reporting mode.
+    if (state.terminal) state.terminal.reset();
+    state.terminalEnded = false;
+    state.tmux.inTmux = false;
     const cols = state.terminal ? state.terminal.cols : 80;
     const rows = state.terminal ? state.terminal.rows : 24;
     state.socket.emit("terminal_start", {
