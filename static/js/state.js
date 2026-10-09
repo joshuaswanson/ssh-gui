@@ -28,7 +28,6 @@ const state = {
     windows: [],
     panes: [],
     pollInterval: null,
-    attached: false,
     inTmux: false,
   },
   gitBranch: null,

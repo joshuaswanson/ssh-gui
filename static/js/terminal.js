@@ -46,7 +46,6 @@ function initTerminal() {
     state.terminal.open(terminalEl);
     state.terminalEnded = false;
 
-    // Click-to-move-cursor: query cursor position via DSR, then send arrow keys
     setupTerminalClickHandler(state.terminal);
 
     setTimeout(() => {
@@ -157,73 +156,27 @@ function cdToBrowserPath() {
 // ── Terminal Click-to-Move ────────────────────────────────────────────
 
 function setupTerminalClickHandler(term) {
-  // When user clicks in the terminal, query cursor position via DSR,
-  // then send arrow keys to move the cursor to the clicked column.
+  // Clicking on the cursor's row moves the cursor there with arrow keys.
   term.element.addEventListener("click", (e) => {
-    if (!state.socket) return;
-    // Don't interfere if text is selected
-    const selection = term.getSelection();
-    if (selection && selection.length > 0) return;
+    if (!state.socket || state.terminalEnded) return;
+    if (term.hasSelection()) return;
+    // The program in the terminal handles its own mouse clicks.
+    if (term.modes.mouseTrackingMode !== "none") return;
 
-    // Calculate clicked column from terminal geometry
-    const termEl = term.element.querySelector(".xterm-screen");
-    if (!termEl) return;
-    const termRect = termEl.getBoundingClientRect();
-    const cellWidth = termRect.width / term.cols;
-    const clickCol = Math.floor((e.clientX - termRect.left) / cellWidth);
+    const screen = term.element.querySelector(".xterm-screen");
+    if (!screen) return;
+    const rect = screen.getBoundingClientRect();
+    const clickCol = Math.floor((e.clientX - rect.left) / (rect.width / term.cols));
+    const clickRow = Math.floor((e.clientY - rect.top) / (rect.height / term.rows));
 
-    // Query current cursor position via DSR (Device Status Report)
-    // Response format: ESC [ row ; col R
-    requestCursorPosition(term, (cursorRow, cursorCol) => {
-      const clickedRow = term.buffer.active.cursorY;
+    const buffer = term.buffer.active;
+    if (clickRow !== buffer.cursorY) return;
+    const diff = clickCol - buffer.cursorX;
+    if (diff === 0) return;
 
-      // Only move on the same row as cursor (command line editing)
-      if (clickedRow !== cursorRow) return;
-
-      const diff = clickCol - cursorCol;
-      if (diff === 0) return;
-
-      // Send arrow keys
-      const arrow = diff > 0 ? "\x1b[C" : "\x1b[D";
-      const count = Math.abs(diff);
-      const keys = arrow.repeat(count);
-      state.socket.emit("terminal_input", { data: keys });
-    });
+    const arrow = diff > 0 ? "\x1b[C" : "\x1b[D";
+    state.socket.emit("terminal_input", { data: arrow.repeat(Math.abs(diff)) });
   });
-}
-
-function requestCursorPosition(term, callback) {
-  // Send DSR (ESC[6n) and parse response (ESC[row;colR)
-  let responseData = "";
-  let listening = true;
-
-  const dispose = term.onData((data) => {
-    if (!listening) return;
-
-    // Check if this data contains a DSR response
-    responseData += data;
-    const match = responseData.match(/\x1b\[(\d+);(\d+)R/);
-    if (match) {
-      listening = false;
-      dispose.dispose();
-      const row = parseInt(match[1]) - 1; // 0-indexed
-      const col = parseInt(match[2]) - 1; // 0-indexed
-      callback(row, col);
-    }
-  });
-
-  // Send DSR query
-  if (state.socket) {
-    state.socket.emit("terminal_input", { data: "\x1b[6n" });
-  }
-
-  // Timeout: clean up after 500ms if no response
-  setTimeout(() => {
-    if (listening) {
-      listening = false;
-      dispose.dispose();
-    }
-  }, 500);
 }
 
 // ── Tmux GUI ─────────────────────────────────────────────────────────
@@ -259,20 +212,9 @@ async function refreshTmuxState() {
     if (!data.active) {
       state.tmux.windows = [];
       state.tmux.panes = [];
-      state.tmux.attached = false;
       const bar = document.getElementById("tmux-bar");
       if (bar) bar.classList.add("hidden");
       return;
-    }
-
-    // Disable tmux mouse mode to prevent escape sequence leaks (once)
-    if (!state.tmux.attached) {
-      state.tmux.attached = true;
-      fetch("/api/run-command", {
-        method: "POST",
-        headers: connHeaders(),
-        body: JSON.stringify({ command: "tmux set -g mouse off" }),
-      }).catch(() => {});
     }
 
     state.tmux.windows = data.windows || [];

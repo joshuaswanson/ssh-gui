@@ -9,10 +9,23 @@ bp = Blueprint("tmux", __name__)
 
 PANE_ID = re.compile(r"^%\d+$")
 SECTION = "---"
-WINDOW_FORMAT = "#{window_index}\t#{window_active}\t#{window_panes}\t#{window_name}"
-PANE_FORMAT = (
-    "#{pane_id}\t#{pane_index}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t"
-    "#{pane_height}\t#{pane_active}\t#{pane_current_command}"
+# tmux replaces tab characters in its output under a non-UTF-8 locale, so the
+# separator is printable and the free-text field comes last.
+FIELD = "|"
+WINDOW_FORMAT = FIELD.join(
+    ["#{window_index}", "#{window_active}", "#{window_panes}", "#{window_name}"]
+)
+PANE_FORMAT = FIELD.join(
+    [
+        "#{pane_id}",
+        "#{pane_index}",
+        "#{pane_left}",
+        "#{pane_top}",
+        "#{pane_width}",
+        "#{pane_height}",
+        "#{pane_active}",
+        "#{pane_current_command}",
+    ]
 )
 STATE_SCRIPT = (
     USER_BIN_PATH + "tmux list-sessions -F '#{session_name}' 2>/dev/null | head -n 1; "
@@ -28,7 +41,7 @@ def parse_state(output):
 
     windows = []
     for line in sections[1].splitlines():
-        parts = line.split("\t", 3)
+        parts = line.split(FIELD, 3)
         if len(parts) == 4:
             windows.append(
                 {
@@ -41,7 +54,7 @@ def parse_state(output):
 
     panes = []
     for line in sections[2].splitlines():
-        parts = line.split("\t", 7)
+        parts = line.split(FIELD, 7)
         if len(parts) == 8:
             panes.append(
                 {
