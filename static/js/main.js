@@ -10,7 +10,4 @@ async function init() {
   setupGlobalShortcuts();
   setupClipboardPaste();
   window.addEventListener("resize", handleWindowResize);
-  window.addEventListener("beforeunload", (e) => {
-    if (hasUnsavedEdits()) e.preventDefault();
-  });
 }

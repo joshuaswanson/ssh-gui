@@ -12,7 +12,7 @@ from .connections import close_all_connections
 
 ROOT = Path(__file__).resolve().parent.parent
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
-LOCAL_HOSTNAMES = ("localhost", "127.0.0.1")
+HOST = "127.0.0.1"
 
 socketio = SocketIO()
 
@@ -25,16 +25,16 @@ def create_app(port):
     )
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 
-    allowed_hosts = {f"{name}:{port}" for name in LOCAL_HOSTNAMES}
+    allowed_host = f"{HOST}:{port}"
 
     # The server can run commands on every connected host, so a page from
     # another origin (or a DNS-rebound hostname) must never reach the API.
     @app.before_request
     def reject_foreign_requests():
-        if request.host not in allowed_hosts:
+        if request.host != allowed_host:
             return jsonify({"error": "Forbidden host"}), 403
         origin = request.headers.get("Origin")
-        if origin and urlsplit(origin).netloc not in allowed_hosts:
+        if origin and urlsplit(origin).netloc != allowed_host:
             return jsonify({"error": "Forbidden origin"}), 403
 
     @app.route("/")
@@ -70,7 +70,7 @@ def create_app(port):
     socketio.init_app(
         app,
         async_mode="threading",
-        cors_allowed_origins=[f"http://{host}" for host in allowed_hosts],
+        cors_allowed_origins=[f"http://{allowed_host}"],
     )
     atexit.register(close_all_connections)
     return app

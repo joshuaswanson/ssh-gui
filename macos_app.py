@@ -11,12 +11,11 @@ import Foundation
 import webview
 from PyObjCTools import AppHelper
 
-from sshgui import create_app, socketio
+from sshgui import HOST, create_app, socketio
 
 # The page's localStorage is keyed by origin, so favorites and starred hosts
 # survive a restart only if the port does.
 PREFERRED_PORT = 8023
-HOST = "127.0.0.1"
 LOG_PATH = Path.home() / "Library" / "Logs" / "SSH GUI.log"
 # Apps opened from Finder do not get the PATH set in the shell profile.
 EXTRA_PATH = ("/opt/homebrew/bin", "/usr/local/bin")
@@ -93,7 +92,7 @@ def add_standard_menu_items():
 
 
 def guard_unsaved_edits(window):
-    """Ask the page before closing, since WebKit skips beforeunload on window close."""
+    """Ask the page before closing so unsaved edits are not lost."""
 
     def on_closing():
         answer = []

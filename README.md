@@ -6,23 +6,14 @@
 
 ## Setup
 
-Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
-
-```bash
-uv sync
-uv run app.py
-```
-
-Then open [http://localhost:8022](http://localhost:8022) in your browser.
-
-## macOS app
+Requires macOS and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 brew install librsvg
 ./macos/build.sh
 ```
 
-This creates `dist/SSH GUI.app`, a standalone app that needs no Python or uv. Drag it to Applications.
+This creates `dist/SSH GUI.app`, a standalone app. Drag it to Applications.
 
 ## Dependencies
 
