@@ -7,7 +7,10 @@ dependencies = [
     "flask>=3.0",
     "flask-socketio>=5.3",
     "paramiko>=3.4",
+    "pywebview>=6.2.1",
 ]
 
 [dependency-groups]
-dev = []
+dev = [
+    "pyinstaller>=6.22.3",
+]

@@ -15,12 +15,21 @@ uv run app.py
 
 Then open [http://localhost:8022](http://localhost:8022) in your browser.
 
-On macOS, double-click `start.command` to launch the server and open Safari automatically.
+## macOS app
+
+```bash
+brew install librsvg
+./macos/build.sh
+```
+
+This creates `dist/SSH GUI.app`, a standalone app that needs no Python or uv. Drag it to Applications.
 
 ## Dependencies
 
 - Flask + Flask-SocketIO (web server and WebSocket)
 - Paramiko (SSH/SFTP client)
+- pywebview (native macOS window)
+- PyInstaller (macOS app bundle)
 - xterm.js and the Socket.IO client (bundled in `static/vendor`)
 
 ## Support
