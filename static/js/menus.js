@@ -48,7 +48,7 @@ function showColumnContextMenu(x, y, dirPath) {
 }
 
 async function createEntry(dirPath, kind) {
-  const name = prompt(`New ${kind} name:`);
+  const name = await askText(`New ${kind} name`);
   if (!name) return;
   if (name.includes("/")) {
     showNotification("Names cannot contain /", "error");

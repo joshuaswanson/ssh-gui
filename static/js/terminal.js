@@ -494,11 +494,11 @@ async function tmuxSelectWindow(index) {
   }
 }
 
-function tmuxRenameWindow(index) {
+async function tmuxRenameWindow(index) {
   const win = state.tmux.windows.find((w) => w.index === index);
   const currentName = win ? win.name : "";
-  const name = prompt("Rename window:", currentName);
-  if (name === null) return;
+  const name = await askText("Rename window", currentName);
+  if (!name) return;
 
   fetch("/api/tmux/rename-window", {
     method: "POST",

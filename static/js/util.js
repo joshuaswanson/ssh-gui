@@ -71,6 +71,45 @@ function showScreen(name) {
 
 // ── Notifications and Layout ─────────────────────────────────────────
 
+// Resolves with the trimmed text, or null when cancelled. Escape is handled by
+// the global shortcut that removes the top overlay, and leaves this unresolved.
+function askText(title, initialValue = "") {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal-dialog goto-dialog">
+        <div class="modal-title">${escapeHtml(title)}</div>
+        <input class="modal-input" type="text" value="${escapeHtml(initialValue)}" />
+        <div class="modal-actions">
+          <button class="btn btn-save">OK</button>
+          <button class="btn btn-secondary btn-sm">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const input = overlay.querySelector("input");
+    const finish = (value) => {
+      overlay.remove();
+      resolve(value);
+    };
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") finish(input.value.trim() || null);
+    });
+    overlay.querySelector(".btn-save").addEventListener("click", () => {
+      finish(input.value.trim() || null);
+    });
+    overlay.querySelector(".btn-secondary").addEventListener("click", () => {
+      finish(null);
+    });
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) finish(null);
+    });
+    input.select();
+  });
+}
+
 function showNotification(message, type) {
   const el = document.getElementById("notification");
   el.textContent = message;
