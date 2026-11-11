@@ -39,4 +39,13 @@ iconutil --convert icns "$ICONSET" --output "$BUILD_DIR/icon.icns"
 uv run pyinstaller --noconfirm --distpath dist --workpath "$BUILD_DIR/pyinstaller" macos/ssh-gui.spec
 rm -rf "dist/SSH GUI"
 
-echo "Built dist/SSH GUI.app"
+DMG="dist/SSH-GUI.dmg"
+STAGING="$BUILD_DIR/dmg"
+rm -rf "$STAGING" "$DMG"
+mkdir -p "$STAGING"
+cp -R "dist/SSH GUI.app" "$STAGING/"
+ln -s /Applications "$STAGING/Applications"
+hdiutil create -quiet -volname "SSH GUI" -srcfolder "$STAGING" -fs HFS+ -format UDZO "$DMG"
+rm -rf "$STAGING"
+
+echo "Built dist/SSH GUI.app and $DMG"
